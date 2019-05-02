@@ -42,11 +42,32 @@ normative:
 
 informative:
   SRI: W3C.REC-SRI-20160623
+  BRs:
+    target: https://cabforum.org/baseline-requirements-documents/
+    title: Baseline Requirements for the Issuance and Management of Publicly-Trusted Certificates
+    author:
+      - org: CA/Browser Forum
+    date: 2018-12-10
+  CRLSets:
+    target: https://www.imperialviolet.org/2012/02/05/crlsets.html
+    title: Revocation checking and Chrome's CRL
+    author:
+      - name: Adam Langley
+        org: Chromium
+    date: 2012-02-05
+  OneCrl:
+    target: https://blog.mozilla.org/security/2015/03/03/revoking-intermediate-certificates-introducing-onecrl/
+    title: "Revoking Intermediate Certificates: Introducing OneCRL"
+    author:
+      - name: Mark Goodwin
+        org: Mozilla
+    date: 2015-03-03
 
 --- abstract
 
-This document specifies how a server can send an HTTP request/response pair,
-known as an exchange, with signatures that vouch for that exchange's
+This document specifies how a server can send an HTTP exchange---a request
+URL, content negotiation information, and a response---with signatures that
+vouch for that exchange's
 authenticity. These signatures can be verified against an origin's certificate
 to establish that the exchange is authoritative for an origin even if it was
 transferred over a connection that isn't. The signatures can also be used in
@@ -110,9 +131,14 @@ Publisher
   run a TLS server for their origin.
 
 Exchange (noun)
-: An HTTP request/response pair. This can either be a request from a client and
-the matching response from a server or the request in a PUSH_PROMISE and its
-matching response stream. Defined by Section 8 of {{!RFC7540}}.
+: An HTTP request URL, content negotiation information, and an HTTP response.
+  This can be encoded into a request message from a client with its matching
+  response from a server, into the request in a PUSH_PROMISE with its matching
+  response stream, or into the dedicated format in
+  {{application-signed-exchange}}, which uses {{?I-D.ietf-httpbis-variants}} to
+  encode the content negotiation information. This is not quite the same meaning
+  as defined by Section 8 of {{?RFC7540}}, which assumes the content negotiation
+  information is embedded into HTTP request headers.
 
 Intermediate
 : An entity that fetches signed HTTP exchanges from a publisher or another
@@ -142,8 +168,8 @@ signature vouches for can depend on how the exchange is transferred
 
 The client categorizes each signature as "valid" or "invalid" by validating that
 signature with its certificate or public key and other metadata against the
-exchange's headers and content ({{signature-validity}}). This validity then
-informs higher-level protocols.
+exchange's URL, response headers, and content ({{signature-validity}}). This
+validity then informs higher-level protocols.
 
 Each signature is parameterised with information to let a client fetch assurance
 that a signed exchange is still valid, in the face of revoked certificates and
@@ -155,13 +181,13 @@ this validity information for some period of time.
 
 The `Signature` header field conveys a list of signatures for an exchange, each
 one accompanied by information about how to determine the authority of and
-refresh that signature. Each signature directly signs the exchange's headers and
-identifies one of those headers that enforces the integrity of the exchange's
-payload.
+refresh that signature. Each signature directly signs the exchange's URL and
+response headers and identifies one of those headers that enforces the integrity
+of the exchange's payload.
 
 The `Signature` header is a Structured Header as defined by
 {{!I-D.ietf-httpbis-header-structure}}. Its value MUST be a parameterised list
-(Section 3.3 of {{!I-D.ietf-httpbis-header-structure}}). Its ABNF is:
+(Section 3.4 of {{!I-D.ietf-httpbis-header-structure}}). Its ABNF is:
 
     Signature = sh-param-list
 
@@ -175,38 +201,42 @@ values:
 
 "sig"
 
-: Binary content (Section 3.9 of {{!I-D.ietf-httpbis-header-structure}}) holding
-  the signature of most of these parameters and the exchange's headers.
+: Byte sequence (Section 3.10 of {{!I-D.ietf-httpbis-header-structure}}) holding
+  the signature of most of these parameters and the exchange's URL and response
+  headers.
 
 "integrity"
 
-: A string (Section 3.7 of {{!I-D.ietf-httpbis-header-structure}}) containing
-  the lowercase name of the response header field that guards the response
-  payload's integrity.
+: A string (Section 3.8 of {{!I-D.ietf-httpbis-header-structure}}) containing a
+  "/"-separated sequence of names starting with the lowercase name of the
+  response header field that guards the response payload's integrity. The
+  meaning of subsequent names depends on the response header field, but for the
+  "digest" header field, the single following name is the name of the digest
+  algorithm that guards the payload's integrity.
 
 "cert-url"
 
-: A string (Section 3.7 of {{!I-D.ietf-httpbis-header-structure}}) containing an
+: A string (Section 3.8 of {{!I-D.ietf-httpbis-header-structure}}) containing an
   absolute URL ({{terminology}}) with a scheme of "https" or "data".
 
 "cert-sha256"
 
-: Binary content (Section 3.9 of {{!I-D.ietf-httpbis-header-structure}}) holding
+: Byte sequence (Section 3.10 of {{!I-D.ietf-httpbis-header-structure}}) holding
   the SHA-256 hash of the first certificate found at "cert-url".
 
 "ed25519key"
 
-: Binary content (Section 3.9 of {{!I-D.ietf-httpbis-header-structure}}) holding
+: Byte sequence (Section 3.10 of {{!I-D.ietf-httpbis-header-structure}}) holding
   an Ed25519 public key ({{!RFC8032}}).
 
 {:#signature-validityurl} "validity-url"
 
-: A string (Section 3.7 of {{!I-D.ietf-httpbis-header-structure}}) containing an
+: A string (Section 3.8 of {{!I-D.ietf-httpbis-header-structure}}) containing an
   absolute URL ({{terminology}}) with a scheme of "https".
 
 "date" and "expires"
 
-: An integer (Section 3.5 of {{!I-D.ietf-httpbis-header-structure}})
+: An integer (Section 3.6 of {{!I-D.ietf-httpbis-header-structure}})
   representing a Unix time.
 
 The "cert-url" parameter is *not* signed, so intermediates can update it with a
@@ -222,27 +252,27 @@ readability.
 Signature:
  sig1;
   sig=*MEUCIQDXlI2gN3RNBlgFiuRNFpZXcDIaUpX6HIEwcZEc0cZYLAIga9DsVOMM+g5YpwEBdGW3sS+bvnmAJJiSMwhuBdqp5UY=*;
-  integrity="mi";
+  integrity="digest/mi-sha256";
   validity-url="https://example.com/resource.validity.1511128380";
   cert-url="https://example.com/oldcerts";
   cert-sha256=*W7uB969dFW3Mb5ZefPS9Tq5ZbH5iSmOILpjv2qEArmI=*;
   date=1511128380; expires=1511733180,
  sig2;
   sig=*MEQCIGjZRqTRf9iKNkGFyzRMTFgwf/BrY2ZNIP/dykhUV0aYAiBTXg+8wujoT4n/W+cNgb7pGqQvIUGYZ8u8HZJ5YH26Qg=*;
-  integrity="mi";
+  integrity="digest/mi-sha256";
   validity-url="https://example.com/resource.validity.1511128380";
   cert-url="https://example.com/newcerts";
   cert-sha256=*J/lEm9kNRODdCmINbvitpvdYKNQ+YgBj99DlYp4fEXw=*;
   date=1511128380; expires=1511733180,
  srisig;
   sig=*lGZVaJJM5f2oGczFlLmBdKTDL+QADza4BgeO494ggACYJOvrof6uh5OJCcwKrk7DK+LBch0jssDYPp5CLc1SDA=*
-  integrity="mi";
+  integrity="digest/mi-sha256";
   validity-url="https://example.com/resource.validity.1511128380";
   ed25519key=*zsSevyFsxyZHiUluVBDd4eypdRLTqyWRVOJuuKUz+A8=*
   date=1511128380; expires=1511733180,
  thirdpartysig;
   sig=*MEYCIQCNxJzn6Rh2fNxsobktir8TkiaJYQFhWTuWI1i4PewQaQIhAMs2TVjc4rTshDtXbgQEOwgj2mRXALhfXPztXgPupii+=*;
-  integrity="mi";
+  integrity="digest/mi-sha256";
   validity-url="https://thirdparty.example.com/resource.validity.1511161860";
   cert-url="https://thirdparty.example.com/certs";
   cert-sha256=*UeOwUPkvxlGRTyvHcsMUN0A2oNsZbU8EUvg8A9ZAnNc=*;
@@ -254,8 +284,8 @@ There are 4 signatures: 2 from different secp256r1 certificates within
 controlled by `example.com`, and a fourth using a secp256r1 certificate owned by
 `thirdparty.example.com`.
 
-All 4 signatures rely on the `MI` response header to guard the integrity of the
-response payload.
+All 4 signatures rely on the `Digest` response header with the mi-sha256 digest
+algorithm to guard the integrity of the response payload.
 
 The signatures include a "validity-url" that includes the first time the resource
 was seen. This allows multiple versions of a resource at the same URL to be
@@ -280,9 +310,9 @@ grants 4-day signatures, so clients will need to re-validate more often.
 ### Open Questions ### {#oq-signature-header}
 
 {{?I-D.ietf-httpbis-header-structure}} provides a way to parameterise
-identifiers but not other supported types like binary content. If the
+identifiers but not other supported types like byte sequences. If the
 `Signature` header field is notionally a list of parameterised signatures, maybe
-we should add a "parameterised binary content" type.
+we should add a "parameterised byte sequence" type.
 {:#parameterised-binary}
 
 Should the cert-url and validity-url be lists so that intermediates can offer a
@@ -290,35 +320,22 @@ cache without losing the original URLs? Putting lists in dictionary fields is
 more complex than {{?I-D.ietf-httpbis-header-structure}} allows, so they're
 single items for now.
 
-## CBOR representation of exchange headers ## {#cbor-representation}
+## CBOR representation of exchange response headers ## {#cbor-representation}
 
-To sign an exchange's headers, they need to be serialized into a byte string.
+To sign an exchange's response headers, they need to be serialized into a byte string.
 Since intermediaries and [distributors](#uc-explicit-distributor) might
 rearrange, add, or just reserialize headers, we can't use the literal bytes of
 the headers as this serialization. Instead, this section defines a CBOR
 representation that can be embedded into other CBOR, canonically serialized
 ({{canonical-cbor}}), and then signed.
 
-The CBOR representation of an exchange `exchange`'s headers is the CBOR
-({{!RFC7049}}) array with the following content:
+The CBOR representation of a set of response metadata and headers is the CBOR
+({{!RFC7049}}) map with the following mappings:
 
-1. The map mapping:
-   * The byte string ':method' to the byte string containing `exchange`'s
-     request's method.
-   * The byte string ':url' to the byte string containing `exchange`'s request's
-     effective request URI, which MUST be an absolute URL ({{terminology}}) with
-     a scheme of "https".
-   * For each request header field in `exchange` except for the `Host` header
-     field, the header field's lowercase name as a byte string to the header
-     field's value as a byte string.
-
-     Note: `Host` is excluded because it is already part of the effective
-     request URI.
-1. The map mapping:
-   * the byte string ':status' to the byte string containing `exchange`'s
-     response's 3-digit status code, and
-   * for each response header field in `exchange`, the header field's lowercase
-     name as a byte string to the header field's value as a byte string.
+* The byte string ':status' to the byte string containing the response's 3-digit
+  status code, and
+* For each response header field, the header field's lowercase name as a byte
+  string to the header field's value as a byte string.
 
 ### Example ### {#example-cbor-representation}
 
@@ -331,8 +348,8 @@ Accept: */*
 
 HTTP/1.1 200
 Content-Type: text/html
-MI: mi-sha256=dcRDgR2GM35DluAV13PzgnG6-pvQwPywfFvAu1UeFrs
-Signed-Headers: "content-type", "mi"
+Digest: mi-sha256=dcRDgR2GM35DluAV13PzgnG6+pvQwPywfFvAu1UeFrs=
+Signed-Headers: "content-type", "digest"
 
 <!doctype html>
 <html>
@@ -343,18 +360,11 @@ The cbor representation consists of the following item, represented using the
 extended diagnostic notation from {{?I-D.ietf-cbor-cddl}} appendix G:
 
 ~~~cbor-diag
-[
-  {
-    ':url': 'https://example.com/',
-    'accept': '*/*',
-    ':method': 'GET',
-  },
-  {
-    'mi': 'mi-sha256=dcRDgR2GM35DluAV13PzgnG6-pvQwPywfFvAu1UeFrs',
-    ':status': '200',
-    'content-type': 'text/html'
-  }
-]
+{
+  'digest': 'mi-sha256=dcRDgR2GM35DluAV13PzgnG6+pvQwPywfFvAu1UeFrs=',
+  ':status': '200',
+  'content-type': 'text/html'
+}
 ~~~
 
 ## Loading a certificate chain ## {#cert-chain-format}
@@ -429,14 +439,24 @@ complex data types, so it doesn't need rules to canonicalize those.
 ## Signature validity ## {#signature-validity}
 
 The client MUST parse the `Signature` header field as the parameterised list
-(Section 4.2.3 of {{!I-D.ietf-httpbis-header-structure}}) described in
+(Section 4.2.5 of {{!I-D.ietf-httpbis-header-structure}}) described in
 {{signature-header}}. If an error is thrown during this parsing or any of the
 requirements described there aren't satisfied, the exchange has no valid
 signatures. Otherwise, each member of this list represents a signature with
 parameters.
 
 The client MUST use the following algorithm to determine whether each signature
-with parameters is invalid or potentially-valid for an `exchange`.
+with parameters is invalid or potentially-valid for an exchange's
+
+* `requestUrl`, a byte sequence that can be parsed into the exchange's effective
+  request URI (Section 5.5 of {{!RFC7230}}),
+* `responseHeaders`, a byte sequence holding the canonical serialization
+  ({{canonical-cbor}}) of the CBOR representation ({{cbor-representation}}) of
+  the exchange's response metadata and headers, and
+* `payload`, a stream of bytes constituting the exchange's payload body (Section
+  3.3 of {{!RFC7230}}). Note that the payload body is the message body with any
+  transfer encodings removed.
+
 Potentially-valid results include:
 
 * The signed headers of the exchange so that higher-level protocols can avoid
@@ -450,11 +470,8 @@ actually invalid due to an expired OCSP response MAY retry with `forceFetch` set
 to retrieve an updated OCSP from the original server.
 {:#force-fetch}
 
-1. Let `payload` be the payload body (Section 3.3 of {{!RFC7230}}) of
-   `exchange`. Note that the payload body is the message body with any transfer
-   encodings removed.
 1. Let:
-   * `signature` be the signature (binary content in the parameterised
+   * `signature` be the signature (byte sequence in the parameterised
      identifier's "sig" parameter).
    * `integrity` be the signature's "integrity" parameter.
    * `validity-url` be the signature's "validity-url" parameter.
@@ -464,15 +481,6 @@ to retrieve an updated OCSP from the original server.
    * `date` be the signature's "date" parameter, interpreted as a Unix time.
    * `expires` be the signature's "expires" parameter, interpreted as a Unix
      time.
-1. If `integrity` names a header field that is not present in `exchange`'s
-   response headers or which the client cannot use to check the integrity of
-   `payload` (for example, the header field is new and hasn't been implemented
-   yet), then return "invalid". If the selected header field provides integrity
-   guarantees weaker than SHA-256, return "invalid". If validating integrity
-   using the selected header field requires the client to process records larger
-   than TBD bytes, return "invalid". Clients MUST implement at least the `MI`
-   ({{!I-D.thomson-http-mice}}) header field with its `mi-sha256` content
-   encoding.
 1. Set `publicKey` and `signing-alg` depending on which key fields are present:
    1. If `cert-url` is present:
       1. Let `certificate-chain` be the result of loading the certificate chain
@@ -483,10 +491,10 @@ to retrieve an updated OCSP from the original server.
       1. If `publicKey` is an RSA key, return "invalid".
       1. If `publicKey` is a key using the secp256r1 elliptic curve, set
          `signing-alg` to ecdsa_secp256r1_sha256 as defined in Section 4.2.3 of
-         {{!I-D.ietf-tls-tls13}}.
+         {{!RFC8446}}.
       1. Otherwise, either return "invalid" or set `signing-alg` to a non-legacy
          signing algorithm defined by TLS 1.3 or later
-         ({{!I-D.ietf-tls-tls13}}). This choice MUST depend only on
+         ({{!RFC8446}}). This choice MUST depend only on
          `publicKey`'s type and not on any other context.
    1. If `ed25519key` is present, set `publicKey` to `ed25519key` and
       `signing-alg` to ed25519, as defined by {{!RFC8032}}
@@ -494,7 +502,7 @@ to retrieve an updated OCSP from the original server.
    "invalid".
 1. If the current time is before `date` or after `expires`, return "invalid".
 1. Let `message` be the concatenation of the following byte strings. This
-   matches the {{?I-D.ietf-tls-tls13}} format to avoid cross-protocol attacks if
+   matches the {{?RFC8446}} format to avoid cross-protocol attacks if
    anyone uses the same key in a TLS certificate and an exchange-signing
    certificate.
    1. A string that consists of octet 32 (0x20) repeated 64 times.
@@ -506,32 +514,63 @@ to retrieve an updated OCSP from the original server.
       Exchange 1 ” instead. This ensures that signers can predict how their
       signatures will be used.
    1. A single 0 byte which serves as a separator.
-   1. The bytes of the canonical CBOR serialization ({{canonical-cbor}}) of a
-      CBOR map mapping:
-      1. If `cert-sha256` is set:
-         1. The text string "cert-sha256" to the byte string value of
-            `cert-sha256`.
-      1. The text string "validity-url" to the byte string value of
-         `validity-url`.
-      1. The text string "date" to the integer value of `date`.
-      1. The text string "expires" to the integer value of `expires`.
-      1. The text string "headers" to the CBOR representation
-         ({{cbor-representation}}) of `exchange`'s headers.
+   1. If `cert-sha256` is set, a byte holding the value 32 followed by the 32
+      bytes of the value of `cert-sha256`. Otherwise a 0 byte.
+   1. The 8-byte big-endian encoding of the length in bytes of `validity-url`,
+      followed by the bytes of `validity-url`.
+   1. The 8-byte big-endian encoding of `date`.
+   1. The 8-byte big-endian encoding of `expires`.
+   1. The 8-byte big-endian encoding of the length in bytes of `requestUrl`,
+      followed by the bytes of `requestUrl`.
+   1. The 8-byte big-endian encoding of the length in bytes of `responseHeaders`,
+      followed by the bytes of `responseHeaders`.
 1. If `cert-url` is present and the SHA-256 hash of `main-certificate`'s
    `cert_data` is not equal to `cert-sha256` (whose presence was checked when the
    `Signature` header field was parsed), return "invalid".
 
    Note that this intentionally differs from TLS 1.3, which signs the entire
    certificate chain in its Certificate Verify (Section 4.4.3 of
-   {{?I-D.ietf-tls-tls13}}), in order to allow updating the stapled OCSP
+   {{?RFC8446}}), in order to allow updating the stapled OCSP
    response without updating signatures at the same time.
-1. If `signature` is a valid signature of `message` by `publicKey` using
-   `signing-alg`, return "potentially-valid" with whichever is present of
-   `certificate-chain` or `ed25519key`. Otherwise, return "invalid".
+1. If `signature` is not a valid signature of `message` by `publicKey` using
+   `signing-alg`, return "invalid".
+1. If `headers`, interpreted according to {{cbor-representation}}, does not
+   contain a `Content-Type` response header field (Section 3.1.1.5 of
+   {{!RFC7231}}), return "invalid".
+
+   Clients MUST interpret the signed payload as this specified media type
+   instead of trying to sniff a media type from the bytes of the payload, for
+   example by attaching an `X-Content-Type-Options: nosniff` header field
+   ({{FETCH}}) to the extracted response.
+1. If `integrity` names a header field and parameter that is not present in
+   `responseHeaders` or which the client cannot use to check the
+   integrity of `payload` (for example, the header field is new and hasn't been
+   implemented yet), then return "invalid". If the selected header field
+   provides integrity guarantees weaker than SHA-256, return "invalid". If
+   validating integrity using the selected header field requires the client to
+   process records larger than 16384 bytes, return "invalid". Clients MUST
+   implement at least the `Digest` header field with its `mi-sha256` digest
+   algorithm (Section 3 of {{!I-D.thomson-http-mice}}).
+
+   Note: RFC EDITOR PLEASE DELETE THIS NOTE; Implementations of drafts of this
+   RFC MUST recognize the draft spelling of the content encoding and digest
+   algorithm specified by {{!I-D.thomson-http-mice}} until that draft is
+   published as an RFC. For example, implementations of
+   draft-thomson-http-mice-03 would use `mi-sha256-03` and MUST NOT use
+   `mi-sha256` itself. This ensures that final implementations don't need to
+   handle compatibility with implementations of early drafts of that content
+   encoding.
+
+   If `payload` doesn't match the integrity information in the header described
+   by `integrity`, return "invalid".
+1. Return "potentially-valid" with whichever is present of `certificate-chain`
+   or `ed25519key`.
+
 
 Note that the above algorithm can determine that an exchange's headers are
 potentially-valid before the exchange's payload is received. Similarly, if
-`integrity` identifies a header field like `MI` ({{?I-D.thomson-http-mice}})
+`integrity` identifies a header field and parameter like `Digest:mi-sha256`
+({{?I-D.thomson-http-mice}})
 that can incrementally validate the payload, early parts of the payload can be
 determined to be potentially-valid before later parts of the payload.
 Higher-level protocols MAY process parts of the exchange that have been
@@ -577,7 +616,7 @@ validity = {
 ~~~
 
 The elements of the `signatures` array are parameterised identifiers (Section
-4.2.4 of {{!I-D.ietf-httpbis-header-structure}}) meant to replace the signatures
+4.2.6 of {{!I-D.ietf-httpbis-header-structure}}) meant to replace the signatures
 within the `Signature` header field pointing to this validity data. If the
 signed exchange contains a bug severe enough that clients need to stop using the
 content, the `signatures` array MUST NOT be present.
@@ -631,7 +670,7 @@ and `sig2`) if it wishes to update those signatures. This URL might contain:
     'sig1; '
     'sig=*MEQCIC/I9Q+7BZFP6cSDsWx43pBAL0ujTbON/+7RwKVk+ba5AiB3FSFLZqpzmDJ0NumNwN04pqgJZE99fcK86UjkPbj4jw==*; '
     'validity-url="https://example.com/resource.validity.1511157180"; '
-    'integrity="mi"; '
+    'integrity="digest/mi-sha256"; '
     'cert-url="https://example.com/newcerts"; '
     'cert-sha256=*J/lEm9kNRODdCmINbvitpvdYKNQ+YgBj99DlYp4fEXw=*; '
     'date=1511733180; expires=1512337980'
@@ -686,7 +725,7 @@ all.
 
 The `Accept-Signature` header field is a Structured Header as defined by
 {{!I-D.ietf-httpbis-header-structure}}. Its value MUST be a parameterised list
-(Section 3.3 of {{!I-D.ietf-httpbis-header-structure}}). Its ABNF is:
+(Section 3.4 of {{!I-D.ietf-httpbis-header-structure}}). Its ABNF is:
 
     Accept-Signature = sh-param-list
 
@@ -702,15 +741,17 @@ parameters on existing identifiers may be defined by future specifications.
 
 ### Integrity identifiers ### {#accept-signature-integrity}
 
-Identifiers starting with "mi/" indicate that the client supports the `MI`
-header field ({{!I-D.thomson-http-mice}}) with the parameter from the HTTP MI
-Parameter Registry registry named in lower-case by the rest of the identifier.
-For example, "mi/mi-blake2" indicates support for Merkle integrity with the
-as-yet-unspecified mi-blake2 parameter, and "-mi/mi-sha256" indicates
+Identifiers starting with "digest/" indicate that the client supports the
+`Digest` header field ({{!RFC3230}}) with the parameter from the [HTTP Digest
+Algorithm Values
+Registry](https://www.iana.org/assignments/http-dig-alg/http-dig-alg.xhtml)
+registry named in lower-case by the rest of the identifier. For example,
+"digest/mi-blake2" indicates support for Merkle integrity with the
+as-yet-unspecified mi-blake2 parameter, and "-digest/mi-sha256" indicates
 non-support for Merkle integrity with the mi-sha256 content encoding.
 
 If the `Accept-Signature` header field is present, servers SHOULD assume support
-for "mi/mi-sha256" unless the header field states otherwise.
+for "digest/mi-sha256" unless the header field states otherwise.
 
 ### Key type identifiers ### {#accept-signature-key-types}
 
@@ -725,7 +766,7 @@ for "ecdsa/secp256r1" unless the header field states otherwise.
 
 The "ed25519key" identifier has parameters indicating the public keys that will
 be used to validate the returned signature. Each parameter's name is
-re-interpreted as binary content (Section 3.9 of
+re-interpreted as a byte sequence (Section 3.10 of
 {{!I-D.ietf-httpbis-header-structure}}) encoding a prefix of the public key. For
 example, if the client will validate signatures using the public key whose
 base64 encoding is `11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=`, valid
@@ -750,7 +791,7 @@ because 5 bytes isn't a valid length for encoded base64, and not
 Accept-Signature: ..., ed25519key; 11qYAQ
 ~~~
 
-because it doesn't start or end with the `*`s that indicate binary content.
+because it doesn't start or end with the `*`s that indicate a byte sequence.
 
 Note that `ed25519key; **` is an empty prefix, which matches all public keys, so
 it's useful in subresource integrity ({{uc-sri}}) cases like `<link rel=preload
@@ -760,21 +801,20 @@ as=script href="...">` where the public key isn't known until the matching
 ### Examples ### {#accept-signature-examples}
 
 ~~~http
-Accept-Signature: mi/mi-sha256
+Accept-Signature: digest/mi-sha256
 ~~~
 
 states that the client will accept signatures with payload integrity assured by
-the `MI` header and `mi-sha256` content encoding and implies that the client
-will accept integrity assured by the `Digest: SHA-256` header and signatures
-from ECDSA keys on the secp256r1 curve.
+the `Digest` header and `mi-sha256` digest algorithm and implies that the client
+will accept signatures from ECDSA keys on the secp256r1 curve.
 
 ~~~http
 Accept-Signature: -ecdsa/secp256r1, ecdsa/secp384r1
 ~~~
 
 states that the client will accept ECDSA keys on the secp384r1 curve but not the
-secp256r1 curve and payload integrity assured with the `MI: mi-sha256` header
-field.
+secp256r1 curve and payload integrity assured with the `Digest: mi-sha256`
+header field.
 
 ### Open Questions ### {#oq-accept-signature}
 
@@ -792,24 +832,35 @@ Do I have the right structure for the identifiers indicating feature support?
 # Cross-origin trust {#cross-origin-trust}
 
 To determine whether to trust a cross-origin exchange, the client takes a
-`Signature` header field ({{signature-header}}) and the `exchange`. The client
-MUST parse the `Signature` header into a list of signatures according to the
-instructions in {{signature-validity}}, and run the following algorithm for each
-signature, stopping at the first one that returns "valid". If any signature
-returns "valid", return "valid". Otherwise, return "invalid".
+`Signature` header field ({{signature-header}}) and the exchange's
+
+* `requestUrl`, a byte sequence that can be parsed into the exchange's effective
+  request URI (Section 5.5 of {{!RFC7230}}),
+* `responseHeaders`, a byte sequence holding the canonical serialization
+  ({{canonical-cbor}}) of the CBOR representation ({{cbor-representation}}) of
+  the exchange's response metadata and headers, and
+* `payload`, a stream of bytes constituting the exchange's payload body (Section
+  3.3 of {{!RFC7230}}).
+
+The client MUST parse the `Signature` header into a list of signatures according
+to the instructions in {{signature-validity}}, and run the following algorithm
+for each signature, stopping at the first one that returns "valid". If any
+signature returns "valid", return "valid". Otherwise, return "invalid".
 
 1. If the signature's ["validity-url" parameter](#signature-validityurl) is not
    [same-origin](https://html.spec.whatwg.org/multipage/origin.html#same-origin)
-   with `exchange`'s effective request URI (Section 5.5 of {{!RFC7230}}), return
-   "invalid".
+   with `requestUrl`, return "invalid".
 1. Use {{signature-validity}} to determine the signature's validity for
-   `exchange`, getting `certificate-chain` back. If this returned "invalid" or
-   didn't return a certificate chain, return "invalid".
-1. If `exchange`'s request method is not safe (Section 4.2.1 of {{!RFC7231}}) or
-   not cacheable (Section 4.2.3 of {{!RFC7231}}), return "invalid".
-1. If `exchange`'s headers contain a stateful header field, as defined in
-   {{stateful-headers}}, return "invalid".
-1. Let `authority` be the host component of `exchange`'s effective request URI.
+   `requestUrl`, `responseHeaders`, and `payload`, getting `certificate-chain` back. If
+   this returned "invalid" or didn't return a certificate chain, return
+   "invalid".
+1. Let `response` be the response metadata and headers parsed out of
+   `responseHeaders`.
+1. If Section 3 of {{!RFC7234}} forbids a shared cache from storing `response`,
+   return "invalid".
+1. If `response`'s headers contain an uncached header field, as defined in
+   {{uncached-headers}}, return "invalid".
+1. Let `authority` be the host component of `requestUrl`.
 1. Validate the `certificate-chain` using the following substeps. If any of them
    fail, re-run {{signature-validity}} once over the signature with the
    `forceFetch` flag set, and restart from step 2. If a substep fails again,
@@ -838,21 +889,31 @@ returns "valid", return "valid". Otherwise, return "invalid".
       as described by Section 3.3 of {{!RFC6962}}.
 1. Return "valid".
 
-## Stateful header fields {#stateful-headers}
+## Uncached header fields {#uncached-headers}
+
+Hop-by-hop and other uncached headers MUST NOT appear in a signed exchange.
+These will eventually be listed in {{?I-D.ietf-httpbis-cache}}, but for now
+they're listed here:
+
+* Hop-by-hop header fields listed in the Connection header field (Section 6.1 of
+  {{!RFC7230}}).
+* Header fields listed in the no-cache response directive in the Cache-Control
+  header field (Section 5.2.2.2 of {{!RFC7234}}).
+* Header fields defined as hop-by-hop:
+   * Connection
+   * Keep-Alive
+   * Proxy-Connection
+   * Trailer
+   * Transfer-Encoding
+   * Upgrade
+* Stateful headers as defined below.
+
+### Stateful header fields {#stateful-headers}
 
 As described in {{seccons-over-signing}}, a publisher can cause problems if they
 sign an exchange that includes private information. There's no way for a client
 to be sure an exchange does or does not include private information, but header
 fields that store or convey stored state in the client are a good sign.
-
-A stateful request header field informs the server of per-client state. These
-include but are not limited to:
-
-* `Authorization`, {{?RFC7235}}
-* `Cookie`, {{?RFC6265}}
-* `Cookie2`, {{?RFC2965}}
-* `Proxy-Authorization`, {{?RFC7235}}
-* `Sec-WebSocket-Key`, {{?RFC6455}}
 
 A stateful response header field modifies state, including authentication
 status, in the client. The HTTP cache is not considered part of this state.
@@ -860,13 +921,16 @@ These include but are not limited to:
 
 * `Authentication-Control`, {{?RFC8053}}
 * `Authentication-Info`, {{?RFC7615}}
+* `Clear-Site-Data`, {{?W3C.WD-clear-site-data-20171130}}
 * `Optional-WWW-Authenticate`, {{?RFC8053}}
 * `Proxy-Authenticate`, {{?RFC7235}}
 * `Proxy-Authentication-Info`, {{?RFC7615}}
+* `Public-Key-Pins`, {{?RFC7469}}
 * `Sec-WebSocket-Accept`, {{?RFC6455}}
 * `Set-Cookie`, {{?RFC6265}}
 * `Set-Cookie2`, {{?RFC2965}}
 * `SetProfile`, {{?W3C.NOTE-OPS-OverHTTP}}
+* `Strict-Transport-Security`, {{?RFC6797}}
 * `WWW-Authenticate`, {{?RFC7235}}
 
 ## Certificate Requirements {#cross-origin-cert-req}
@@ -897,10 +961,21 @@ able to make even one unauthorized signature.
 Certificates with this extension MUST be revoked if an unauthorized entity is
 able to make even one unauthorized signature.
 
+Certificates with this extension MUST have a Validity Period no greater than 90
+days.
+
 Conforming CAs MUST NOT mark this extension as critical.
 
+A conforming CA MUST NOT issue certificates with this extension unless, for each
+dNSName in the subjectAltName extension of the certificate to be issued:
+
+1. An "issue" or "issuewild" CAA property ({{!RFC6844}}) exists that authorizes
+   the CA to issue the certificate; and
+1. The "cansignhttpexchanges" parameter ({{caa-cansignhttpexchanges}}) is
+   present on the property and is equal to "yes"
+
 Clients MUST NOT accept certificates with this extension in TLS connections
-(Section 4.4.2.2 of {{!I-D.ietf-tls-tls13}}).
+(Section 4.4.2.2 of {{!RFC8446}}).
 
 RFC EDITOR PLEASE DELETE THE REST OF THE PARAGRAPHS IN THIS SECTION
 
@@ -915,6 +990,24 @@ extension. This OID might or might not be used as the final OID for the
 extension, so certificates including it might need to be reissued once the final
 RFC is published.
 
+Some certificates have already been issued with this extension and with validity
+periods longer than 90 days. These certificates will not immediately be treated
+as invalid. Instead:
+
+* Clients MUST reject certificates with this extension that were issued after
+  2019-05-01 and have a Validity Period longer than 90 days.
+* After 2019-08-01, clients MUST reject all certificates with this extension
+  that have a Validity Period longer than 90 days.
+
+The above requirements on CAs to limit the Validity Period and check for a CAA
+parameter are effective starting 2019-05-01.
+
+### Extensions to the CAA Record: cansignhttpexchanges Parameter {#caa-cansignhttpexchanges}
+
+A CAA parameter "cansignhttpexchanges" is defined for the "issue" and
+"issuewild" properties defined by {{!RFC6844}}.  The value of this parameter, if
+specified, MUST be "yes".
+
 # Transferring a signed exchange {#transfer}
 
 A signed exchange can be transferred in several ways, of which three are
@@ -923,39 +1016,47 @@ described here.
 ## Same-origin response {#same-origin-response}
 
 The signature for a signed exchange can be included in a normal HTTP response.
-Because different clients send different request header fields, and intermediate
+Because different clients send different request header fields, clients don't
+know how the server's content negotiation algorithm works, and intermediate
 servers add response header fields, it can be impossible to have a signature for
-the exact request and response that the client sees. Therefore, when a client
-validates the `Signature` header field for an exchange represented as a normal
-HTTP request/response pair, it MUST pass only the subset of header fields
-defined by {{significant-headers}} to the validation procedure
-({{signature-validity}}).
+the exchange's exact request, content negotiation, and response. Therefore, when a client
+calls the validation procedure in {{signature-validity}}) to validate the
+`Signature` header field for an exchange represented as a normal HTTP
+request/response pair, it MUST pass:
+
+* The `Signature` header field,
+* The effective request URI (Section 5.5 of {{!RFC7230}}) of the request,
+* The serialized headers defined by {{serialized-headers}}, and
+* The response's payload.
 
 If the client relies on signature validity for any aspect of its behavior, it
 MUST ignore any header fields that it didn't pass to the validation procedure.
 
-### Significant headers for a same-origin response {#significant-headers}
+If the signed response includes a `Variants` header field, the client MUST use
+the cache behavior algorithm in Section 4 of {{!I-D.ietf-httpbis-variants}} to
+check that the signed response is an appropriate representation for the request
+the client is trying to fulfil. If the response is not an appropriate
+representation, the client MUST treat the signature as invalid.
 
-The significant headers of an exchange represented as a normal HTTP
+### Serialized headers for a same-origin response {#serialized-headers}
+
+The serialized headers of an exchange represented as a normal HTTP
 request/response pair (Section 2.1 of {{?RFC7230}} or Section 8.1 of
-{{?RFC7540}}) are:
-
-* The method (Section 4 of {{!RFC7231}}) and effective request URI (Section 5.5
-  of {{!RFC7230}}) of the request.
-* The response status code (Section 6 of {{!RFC7231}}) and the response header
-  fields whose names are listed in that exchange's `Signed-Headers` header field
-  ({{signed-headers}}), in the order they appear in that header field. If a
-  response header field name from `Signed-Headers` does not appear in the
-  exchange's response header fields, the exchange has no significant headers.
+{{?RFC7540}}) are the canonical serialization ({{canonical-cbor}}) of the CBOR
+representation ({{cbor-representation}}) of the response status code (Section 6
+of {{!RFC7231}}) and the response header fields whose names are listed in that
+response's `Signed-Headers` header field ({{signed-headers}}). If a response
+header field name from `Signed-Headers` does not appear in the response's header
+fields, the exchange has no serialized headers.
 
 If the exchange's `Signed-Headers` header field is not present, doesn't parse as
 a Structured Header ({{!I-D.ietf-httpbis-header-structure}}) or doesn't follow
 the constraints on its value described in {{signed-headers}}, the exchange has
-no significant headers.
+no serialized headers.
 
-#### Open Questions {#oq-significant-headers}
+#### Open Questions {#oq-serialized-headers}
 
-Do the significant headers of an exchange need to include the `Signed-Headers`
+Do the serialized headers of an exchange need to include the `Signed-Headers`
 header field itself?
 
 ### The Signed-Headers Header {#signed-headers}
@@ -973,9 +1074,6 @@ signatures' parameters because the signed header fields need to be consistent
 across all signatures of an exchange, to avoid forcing higher-level protocols to
 merge the header field lists of valid signatures.
 
-See {{how-much-to-sign}} for a discussion of why only the URL from the request
-is included and not other request headers.
-
 `Signed-Headers` is a Structured Header as defined by
 {{!I-D.ietf-httpbis-header-structure}}. Its value MUST be a list (Section 3.2 of
 {{!I-D.ietf-httpbis-header-structure}}). Its ABNF is:
@@ -983,7 +1081,7 @@ is included and not other request headers.
     Signed-Headers = sh-list
 
 Each element of the `Signed-Headers` list must be a lowercase string (Section
-3.7 of {{!I-D.ietf-httpbis-header-structure}}) naming an HTTP response header
+3.8 of {{!I-D.ietf-httpbis-header-structure}}) naming an HTTP response header
 field. Pseudo-header field names (Section 8.1.2.1 of {{!RFC7540}}) MUST NOT
 appear in this list.
 
@@ -1038,16 +1136,28 @@ If the client has set the ENABLE_CROSS_ORIGIN_PUSH setting to 1, the server MAY
 Push a signed exchange for which it is not authoritative, and the client MUST
 NOT treat a PUSH_PROMISE for which the server is not authoritative as a stream
 error (Section 5.4.2 of {{!RFC7540}}) of type PROTOCOL_ERROR, as described in
-Section 8.2 of {{?RFC7540}}.
+Section 8.2 of {{?RFC7540}}, unless there is another error as described below.
 
-Instead, the client MUST validate such a PUSH_PROMISE and its response by taking
-the `Signature` header field from the response, and the exchange consisting of
-the PUSH_PROMISE and the response without that `Signature` header field, and
-passing them to the algorithm in {{cross-origin-trust}}. If this returns
-"invalid", the client MUST treat the response as a stream error (Section 5.4.2
-of {{!RFC7540}}) of type NO_TRUSTED_EXCHANGE_SIGNATURE. Otherwise, the client
-MUST treat the pushed response as if the server were authoritative for the
-PUSH_PROMISE's authority.
+Instead, the client MUST validate such a PUSH_PROMISE and its response against
+the following list:
+
+1. If the PUSH_PROMISE includes any non-pseudo request header fields, the client
+   MUST treat it as a stream error (Section 5.4.2 of {{!RFC7540}}) of type
+   PROTOCOL_ERROR.
+1. If the PUSH_PROMISE's method is not `GET`, the client MUST treat it as a
+   stream error (Section 5.4.2 of {{!RFC7540}}) of type PROTOCOL_ERROR.
+1. Run the algorithm in {{cross-origin-trust}} over:
+   * The `Signature` header field from the response.
+   * The effective request URI from the PUSH_PROMISE.
+   * The canonical serialization ({{canonical-cbor}}) of the CBOR representation
+     ({{cbor-representation}}) of the pushed response's status and its headers
+     except for the `Signature` header field.
+   * The response's payload.
+
+   If this returns "invalid", the client MUST treat the response as a stream error
+   (Section 5.4.2 of {{!RFC7540}}) of type NO_TRUSTED_EXCHANGE_SIGNATURE.
+   Otherwise, the client MUST treat the pushed response as if the server were
+   authoritative for the PUSH_PROMISE's authority.
 
 #### Open Questions ### {#oq-cross-origin-push}
 
@@ -1060,32 +1170,46 @@ could do both with a list of URLs.
 
 To allow signed exchanges to be the targets of `<link rel=prefetch>` tags, we
 define the  `application/signed-exchange` content type that represents a signed
-HTTP exchange, including request metadata and header fields, response metadata
+HTTP exchange, including a request URL, response metadata
 and header fields, and a response payload.
+
+When served over HTTP, a response containing an `application/signed-exchange`
+payload MUST include at least the following response header fields, to reduce
+content sniffing vulnerabilities ({{seccons-content-sniffing}}):
+
+* Content-Type: application/signed-exchange;v=*version*
+* X-Content-Type-Options: nosniff
 
 This content type consists of the concatenation of the following items:
 
-1. The ASCII characters "sxg1" followed by a 0 byte, to serve as a file
-   signature. This is redundant with the MIME type, and recipients that receive
-   both MUST check that they match and stop parsing if they don't.
+1. 8 bytes consisting of the ASCII characters "sxg1" followed by 4 0x00 bytes,
+   to serve as a file signature. This is redundant with the MIME type, and
+   recipients that receive both MUST check that they match and stop parsing if
+   they don't.
 
    Note: RFC EDITOR PLEASE DELETE THIS NOTE; The implementation of the final RFC
    MUST use this file signature, but implementations of drafts MUST NOT use it
-   and MUST use another implementation-specific string beginning with "sxg1-" and
-   ending with a 0 byte instead.
-1. 3 bytes storing a big-endian integer `sigLength`. If this is larger
-   than TBD, parsing MUST fail.
+   and MUST use another implementation-specific 8-byte string beginning with
+   "sxg1-".
+1. 2 bytes storing a big-endian integer `fallbackUrlLength`.
+1. `fallbackUrlLength` bytes holding a `fallbackUrl`, which MUST UTF-8 decode to
+   an absolute URL with a scheme of "https".
+
+   Note: The byte location of the fallback URL is intended to remain invariant
+   across versions of the `application/signed-exchange` format so that parsers
+   encountering unknown versions can always find a URL to redirect to.
+
+   Issue: Should this fallback information also include the method?
+1. 3 bytes storing a big-endian integer `sigLength`. If this is larger than
+   16384 (16*1024), parsing MUST fail.
 1. 3 bytes storing a big-endian integer `headerLength`. If this is larger than
-   TBD, parsing MUST fail.
+   524288 (512*1024), parsing MUST fail.
 1. `sigLength` bytes holding the `Signature` header field's value
    ({{signature-header}}).
-1. `headerLength` bytes holding the signed headers, the canonical serialization
-   ({{canonical-cbor}}) of the CBOR representation of the request and response
+1. `headerLength` bytes holding `signedHeaders`, the canonical serialization
+   ({{canonical-cbor}}) of the CBOR representation of the response
    headers of the exchange represented by the `application/signed-exchange`
    resource ({{cbor-representation}}), excluding the `Signature` header field.
-
-   Note that this is exactly the bytes used when checking signature validity in
-   {{signature-validity}}.
 1. The payload body (Section 3.3 of {{!RFC7230}}) of the exchange represented by
    the `application/signed-exchange` resource.
 
@@ -1098,8 +1222,8 @@ This content type consists of the concatenation of the following items:
 
 To determine whether to trust a cross-origin exchange stored in an
 `application/signed-exchange` resource, pass the `Signature` header field's
-value and an exchange consisting of the headers from the signed headers section
-and the payload body, to the algorithm in {{cross-origin-trust}}.
+value, `fallbackUrl` as the effective request URI, `signedHeaders`, and the
+payload body to the algorithm in {{cross-origin-trust}}.
 
 ### Example ## {#example-application-signed-exchange}
 
@@ -1110,19 +1234,13 @@ defined in Appendix G of {{?I-D.ietf-cbor-cddl}}, and most of the `Signature`
 header field and payload elided with a ...:
 
 ~~~
-sxg1\0<3-byte length of the following header
+sxg1\0\0\0\0<2-byte length of the following url string>
+https://example.com/<3-byte length of the following header
 value><3-byte length of the encoding of the
-following array>sig1; sig=*...; integrity="mi"; ...[
-  {
-    ':method': 'GET',
-    ':url': 'https://example.com/',
-    'accept', '*/*'
-  },
-  {
-    ':status': '200',
-    'content-type': 'text/html'
-  }
-]<!doctype html>\r\n<html>...
+following map>sig1; sig=*...; integrity="digest/mi-sha256"; ...{
+  ':status': '200',
+  'content-type': 'text/html'
+}<!doctype html>\r\n<html>...
 ~~~
 
 ### Open Questions ## {#oq-application-signed-exchange}
@@ -1180,10 +1298,62 @@ attacker.
 
 Relaxing the requirement to consult DNS when determining authority for an origin
 means that an attacker who possesses a valid certificate no longer needs to be
-on-path to redirect traffic to them; instead of modifying DNS, they need only
-convince the user to visit another Web site in order to serve responses signed
-as the target. This consideration and mitigations for it are shared by the
-combination of {{?RFC8336}} and {{?I-D.ietf-httpbis-http2-secondary-certs}}.
+on-path to redirect traffic to them; instead of modifying DNS or IP routing,
+they need only convince the user to visit another Web site in order to serve
+responses signed as the target. This consideration and mitigations for it are
+shared by the combination of {{?RFC8336}} and
+{{?I-D.ietf-httpbis-http2-secondary-certs}}, and are discussed further in
+{{?I-D.bishop-httpbis-origin-fed-up}}.
+
+### Mis-issued certificates
+
+If a CA mis-issues a certificate for a domain, this specification provides a way
+to detect the mis-issuance and mitigate harm within approximately two weeks.
+Specifically, because all signed exchanges must include a
+`SignedCertificateTimestampList` ({{?RFC6962}}, a CT log has promised to publish
+the mis-issued certificate within that log's Maximum Merge Delay, 1 day for many
+logs. The domain owner can then detect the mis-issued certificate and notify the
+CA to revoke it, which the {{BRs}}, section 4.9.1.1, say they must do within
+another 5 days.
+
+Once the mis-issued certificate is revoked, existing OCSP responses begin to
+expire. The {{BRs}}, section 4.9.10, require that OCSP responses have a maximum
+expiration time of 10 days, after which they can't be used to validate a
+certificate chain ({{cert-chain-format}}). This leads to a total compromised
+time of 16 days after a mis-issuance.
+
+However, CAs might future-date their OCSP responses, in which case the
+mitigation doesn't work.
+
+CAs are forbidden from future-dating their OCSP responses by the {{BRs}} section
+4.9.9, "OCSP responses MUST conform to RFC6960 and/or RFC5019." {{?RFC6960}}
+includes, "The time at which the status was known to be correct SHALL be
+reflected in the thisUpdate field of the response.", and {{?RFC5019}} includes,
+"When pre-producing OCSPResponse messages, the responder MUST set the
+thisUpdate, nextUpdate, and producedAt times as follows: thisUpdate: The time at
+which the status being indicated is known to be correct."
+
+However, if a CA violates the {{BRs}} to sign future-dated OCSP responses,
+attempts to keep the nonconformant OCSP responses private, but then leaks them,
+it could cause clients to trust a hostile signed exchange long after its
+certificate has been revoked.
+
+Clients could use systems like {{CRLSets}} and {{OneCrl}} to revoke the
+intermediate certificate that signed the future-dated OCSP responses.
+
+### Stolen private keys
+
+If the private key for a CanSignHttpExchanges certificate is stolen, it can be
+used at scale until the certificate expires or is revoked, and unlike for a
+stolen key for a normal TLS-terminating certificate, the rightful owner can't
+detect the problem by watching for attacks on the DNS or routing infrastructure.
+
+This specification does not currently propose a way for the rightful owner to
+detect that their keys are being used by an attacker, after they've opted into
+the risk by requesting a CanSignHttpExchanges certificate in the first place.
+Clients can fetch a signature's "validity-url" ({{signature-header}}) to help
+owners detect key compromise, but that compromises some of the privacy
+properties of this specification.
 
 ## Downgrades ## {#seccons-downgrades}
 
@@ -1214,7 +1384,9 @@ The use of a single `Signed-Headers` header field prevents us from signing
 aspects of the request other than its effective request URI (Section 5.5 of
 {{?RFC7230}}). For example, if a publisher signs both `Content-Encoding: br` and
 `Content-Encoding: gzip` variants of a response, what's the impact if an
-attacker serves the brotli one for a request with `Accept-Encoding: gzip`?
+attacker serves the brotli one for a request with `Accept-Encoding: gzip`? This
+is mitigated by using {{?I-D.ietf-httpbis-variants}} instead of request headers
+to describe how the client should run content negotiation.
 
 The simple form of `Signed-Headers` also prevents us from signing less than the
 full request URL. The SRI use case ({{uc-sri}}) may benefit from being able to
@@ -1264,6 +1436,48 @@ Even once all clients reject these certificates in TLS connections, this will
 still just discourage and not prevent key re-use, since a server operator can
 unwisely request two different certificates with the same private key.
 
+## Content sniffing ## {#seccons-content-sniffing}
+
+While modern browsers tend to trust the `Content-Type` header sent with a
+resource, especially when accompanied by `X-Content-Type-Options: nosniff`,
+plugins will sometimes search for executable content buried inside a resource
+and execute it in the context of the origin that served the resource, leading to
+XSS vulnerabilities. For example, some PDF reader plugins look for `%PDF`
+anywhere in the first 1kB and execute the code that follows it.
+
+The `application/signed-exchange` format ({{application-signed-exchange}})
+includes a URL and response headers early in the format, which an
+attacker could use to cause these plugins to sniff a bad content type.
+
+To avoid vulnerabilities, in addition to the response header requirements in
+{{application-signed-exchange}}, servers are advised to only serve an
+`application/signed-exchange` resource (SXG) from a domain if it would also be
+safe for that domain to serve the SXG's content directly, and to follow at least
+one of the following strategies:
+
+1. Only serve signed exchanges from dedicated domains that don't have access to
+   sensitive cookies or user storage.
+1. Generate signed exchanges "offline", that is, in response to a trusted author
+   submitting content or existing signatures reaching a certain age, rather than
+   in response to untrusted-reader queries.
+1. Do all of:
+   1. If the SXG's fallback URL ({{application-signed-exchange}}) is derived
+      from the request URL,
+      [percent-encode](https://url.spec.whatwg.org/#percent-encode) ({{URL}})
+      any bytes that are greater than 0x7E or are not [URL code
+      points](https://url.spec.whatwg.org/#url-code-points) ({{URL}}) in the
+      fallback URL . It is particularly important to make sure no unescaped
+      nulls (0x00) or angle brackets (0x3C and 0x3E) appear.
+   1. Do not reflect request header fields into the set of response headers.
+
+There are still a few binary length fields that an attacker may influence to
+contain sensitive bytes, but they're always followed by lowercase alphabetic
+strings from a small set of possibilities, which reduces the chance that a
+client will sniff them as indicating a particular content type.
+
+To encourage servers to include the `X-Content-Type-Options: nosniff` header
+field, clients SHOULD reject signed exchanges served without it.
+
 # Privacy considerations
 
 Normally, when a client fetches `https://o1.com/resource.js`,
@@ -1285,7 +1499,7 @@ To prevent network operators other than `o1.com` or `o2.com` from learning which
 exchanges were read, clients SHOULD only load exchanges fetched over a transport
 that's protected from eavesdroppers. This can be difficult to determine when the
 exchange is being loaded from local disk, but when the client itself requested
-the exchange over a network it SHOULD require TLS ({{!I-D.ietf-tls-tls13}}) or a
+the exchange over a network it SHOULD require TLS ({{!RFC8446}}) or a
 successor transport layer, and MUST NOT accept exchanges transferred over plain
 HTTP without TLS.
 
@@ -1383,7 +1597,9 @@ Required parameters:
   Note: RFC EDITOR PLEASE DELETE THIS NOTE; Implementations of drafts of this
   specification MUST NOT use simple integers to describe their versions, and
   MUST instead define implementation-specific strings to identify which draft is
-  implemented.
+  implemented. The newest version of
+  {{?I-D.yasskin-httpbis-origin-signed-exchanges-impl}} describes the meaning of
+  one such string.
 
 Optional parameters:  N/A
 
@@ -1463,6 +1679,10 @@ Restrictions on usage:  N/A
 Author:  See Authors' Addresses section.
 
 Change controller:  IESG
+
+## The cansignhttpexchanges CAA Parameter {#iana-caa-cansignhttpexchanges}
+
+There are no IANA considerations for this parameter.
 
 --- back
 
@@ -1611,7 +1831,7 @@ to:
    confused with a signature. That may be just the `rsaEncryption` OID from
    {{?RFC8017}}.
 2. Use the same format as TLS's signatures, specified in Section 4.4.3 of
-   {{?I-D.ietf-tls-tls13}}, with a context string that's specific to this use.
+   {{?RFC8446}}, with a context string that's specific to this use.
 
 The specification also needs to define which signing algorithm to use. It
 currently specifies that as a function from the key type, instead of allowing
@@ -1639,7 +1859,7 @@ by loading other HTML.
 To avoid using an unintended certificate with the same public key as the
 intended one, the content of the leaf certificate or the chain should be
 included in the signed data, like TLS does (Section 4.4.3 of
-{{?I-D.ietf-tls-tls13}}).
+{{?RFC8446}}).
 
 ## How much to sign ## {#how-much-to-sign}
 
@@ -1648,34 +1868,17 @@ The previous {{?I-D.thomson-http-content-signature}} and
 ({{?I-D.cavage-http-signatures}} could also sign the response headers and the
 request method and path. However, the same path, response headers, and content
 may mean something very different when retrieved from a different server.
-{{significant-headers}} currently includes the whole request URL in the
+{{serialized-headers}} currently includes the whole request URL in the
 signature, but it's possible we need a more flexible scheme to allow some
 higher-level protocols to accept a less-signed URL.
 
-The question of whether to include other request headers---primarily the
-`accept*` family---is still open. These headers need to be represented so that
-clients wanting a different language, say, can avoid using the wrong-language
-response, but it's not obvious that there's a security vulnerability if an
-attacker can spoof them. For now, the proposal ({{proposal}}) omits other
-request headers.
-
-In order to allow multiple clients to consume the same signed exchange, the
-exchange shouldn't include the exact request headers that any particular client
-sends. For example, a Japanese resource wouldn't include
-
-~~~http
-accept-language: ja-JP, ja;q=0.9, en;q=0.8, zh;q=0.7, *;q=0.5
-~~~
-
-Instead, it would probably include just
-
-~~~http
-accept-language: ja-JP, ja
-~~~
-
-and clients would use the same matching logic as
-for [PUSH_PROMISE](https://tools.ietf.org/html/rfc7540#section-8.2) frame
-headers.
+Servers might want to sign other request headers in order to capture their
+effects on content negotiation. However, there's no standard algorithm to check
+that a client's actual request headers match request headers sent by a server.
+The most promising attempt at this is {{?I-D.ietf-httpbis-variants}}, which
+encodes the content negotiation algorithm into the `Variants` and `Variant-Key`
+response headers. The proposal here ({{proposal}}) assumes that is in use and
+doesn't sign request headers.
 
 ### Conveying the signed headers
 
@@ -1685,11 +1888,10 @@ published. In the HTTPS world, we have more end-to-end header integrity, but
 it's still likely that there are enough TLS-terminating proxies that the
 publisher's signatures would tend to break before getting to the client.
 
-There's also no way in current HTTP for the response to a client-initiated
-request (Section 8.1 of {{RFC7540}}) to convey the request headers it expected
-to respond to. A PUSH_PROMISE (Section 8.2 of {{RFC7540}}) does not have this
-problem, and it would be possible to introduce a response header to convey the
-expected request headers.
+There's no way in current HTTP for the response to a client-initiated request
+(Section 8.1 of {{RFC7540}}) to convey the request headers it expected to
+respond to, but we sidestep that by conveying content negotiation information in
+response headers, per {{?I-D.ietf-httpbis-variants}}.
 
 Since proxies are unlikely to modify unknown content types, we can wrap the
 original exchange into an `application/signed-exchange` format
@@ -1777,11 +1979,11 @@ data up to a certain size, it can avoid the complexity of spooling large files
 to disk.
 
 To allow the network layer to verify signed exchanges using a bounded amount of
-memory, {{application-signed-exchange}} requires the signature and headers to be
-less than TBD bytes long, and {{signature-validity}} requires that the MI record
-size be less than TBD bytes. This allows the network layer to validate a bounded
-chunk at a time, and pass that chunk on to a renderer, and then forget about
-that chunk before processing the next one.
+memory, {{application-signed-exchange}} requires the signature to be less than
+16kB and the headers to be less than 512kB, and {{signature-validity}} requires
+that the MI record size be less than 16kB. This allows the network layer to
+validate a bounded chunk at a time, and pass that chunk on to a renderer, and
+then forget about that chunk before processing the next one.
 
 The `Digest` header field from {{!RFC3230}} requires the network layer to buffer
 the entire response body, so it's disallowed.
@@ -1869,9 +2071,37 @@ exchange argues for embedding a signature's lifetime into the signature.
 
 RFC EDITOR PLEASE DELETE THIS SECTION.
 
+draft-06
+
+* Add a security consideration for future-dated OCSP responses and for stolen
+  private keys.
+* Define a CAA parameter to opt into certificate issuance.
+* Limit certificate lifetimes to 90 days.
+* UTF-8 decode the fallback URL.
+
 draft-05
 
 * Define absolute URLs, and limit the schemes each instance can use.
+* Fill in TBD size limits.
+* Update to mice-03 including the Digest header.
+* Refer to draft-yasskin-httpbis-origin-signed-exchanges-impl for draft version
+  numbers.
+* Require `exchange`'s response to be cachable by a shared cache.
+* Define the "integrity" field of the Signature header to include subfields of
+  the main integrity-protecting header, including the digest algorithm.
+* Put a fallback URL at the beginning of the `application/signed-exchange`
+  format, which replaces the ':url' key from the CBOR representation of the
+  exchange's request and response metadata and headers.
+* Remove the rest of the request headers from the signed data, in favor of
+  representing content negotiation with the `Variants` response header.
+* Make the signed message format a concatenation of byte sequences, which helps
+  implementations avoid re-serializing the exchange's request and response
+  metadata and headers.
+* Explicitly check the response payload's integrity instead of assuming the
+  client did it elsewhere in processing the response.
+* Reject uncached header fields.
+* Update to draft-ietf-httpbis-header-structure-09.
+* Update to the final TLS 1.3 RFC.
 
 draft-04
 
@@ -1923,5 +2153,6 @@ draft-02
 
 # Acknowledgements
 
-Thanks to Devin Mullins, Ilari Liusvaara, Justin Schuh, Mark Nottingham, Mike
-Bishop, Ryan Sleevi, and Yoav Weiss for comments that improved this draft.
+Thanks to Andrew Ayer, Devin Mullins, Ilari Liusvaara, Justin Schuh, Mark
+Nottingham, Mike Bishop, Ryan Sleevi, and Yoav Weiss for comments that improved
+this draft.

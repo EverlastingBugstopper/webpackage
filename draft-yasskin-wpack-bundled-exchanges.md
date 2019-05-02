@@ -216,6 +216,15 @@ responses = [*response]
 
 ~~~~~
 
+## Serving constraints {#serving-constraints}
+
+When served over HTTP, a response containing an `application/webbundle`
+payload MUST include at least the following response header fields, to reduce
+content sniffing vulnerabilities ({{seccons-content-sniffing}}):
+
+* Content-Type: application/webbundle
+* X-Content-Type-Options: nosniff
+
 ## Load a bundle's metadata {#load-metadata}
 
 A bundle holds a series of sections, which can be accessed randomly using the
@@ -240,7 +249,7 @@ steps, taking the `stream` as input.
    bytestring header from `stream` ({{parse-bytestring}}). If this is an error,
    return that error.
 
-1. If `sectionLengthsLength` is TBD or greater, return an error.
+1. If `sectionLengthsLength` is 8192 (8*1024) or greater, return an error.
 
 1. Let `sectionLengthsBytes` be the result of reading `sectionLengthsLength`
    bytes from `stream`. If `sectionLengthsBytes` is an error, return that error.
@@ -494,7 +503,7 @@ as returned by {{semantics-load-metadata}}.
 1. Let `headerLength` be the result of getting the length of a CBOR bytestring
    header from `stream` ({{parse-bytestring}}). If `headerLength` is an error,
    return that error.
-1. If `headerLength` is TBD or greater, return an error.
+1. If `headerLength` is 524288 (512*1024) or greater, return an error.
 1. Let `headerCbor` be the result of reading `headerLength` bytes from `stream`
    and parsing a CBOR item from them matching the `headers` CDDL rule. If either
    the read or parse returns an error, return that error.
@@ -505,6 +514,13 @@ as returned by {{semantics-load-metadata}}.
    an error.
 1. If `pseudos[':status']` isn't exactly 3 ASCII decimal digits, return an
    error.
+
+1. If `headers` does not contain a `Content-Type` header, return an error.
+
+   The client MUST interpret the following payload as this specified media type
+   instead of trying to sniff a media type from the bytes of the payload, for
+   example by appending an artificial `X-Content-Type-Options: nosniff` header
+   field ({{FETCH}}) to `headers`.
 
 1. Let `payloadLength` be the result of getting the length of a CBOR bytestring
    header from `stream` ({{parse-bytestring}}). If `payloadLength` is an error,
@@ -647,6 +663,8 @@ rule in {{top-level}}.
 
 # Security Considerations {#security}
 
+## Version skew {#seccons-version-skew}
+
 Bundles currently have no mechanism for ensuring that the signed exchanges they
 contain constitute a consistent version of those resources. Even if a website
 never has a security vulnerability when resources are fetched at a single time,
@@ -656,6 +674,57 @@ could have occurred by chance on a client's machine due to normal HTTP caching,
 bundling allows an attacker to guarantee that it happens. Future work in this
 specification might allow a bundle to constrain its resources to come from a
 consistent version.
+
+## Content sniffing ## {#seccons-content-sniffing}
+
+While modern browsers tend to trust the `Content-Type` header sent with a
+resource, especially when accompanied by `X-Content-Type-Options: nosniff`,
+plugins will sometimes search for executable content buried inside a resource
+and execute it in the context of the origin that served the resource, leading to
+XSS vulnerabilities. For example, some PDF reader plugins look for `%PDF`
+anywhere in the first 1kB and execute the code that follows it.
+
+The `application/webbundle` format defined above includes URLs and request
+headers early in the format, which an attacker could use to cause these plugins
+to sniff a bad content type.
+
+To avoid vulnerabilities, in addition to the response header requirements in
+{{serving-constraints}}, servers are advised to only serve an
+`application/webbundle` resource from a domain if it would also be safe for that
+domain to serve the bundle's content directly, and to follow at least one of the
+following strategies:
+
+1. Only serve bundles from dedicated domains that don't have access to sensitive
+   cookies or user storage.
+1. Generate bundles "offline", that is, in response to a trusted author
+   submitting content or existing signatures reaching a certain age, rather than
+   in response to untrusted-reader queries.
+1. Do all of:
+   1. If the bundle's contained URLs (e.g. in the manifest and index) are
+      derived from the request for the bundle,
+      [percent-encode](https://url.spec.whatwg.org/#percent-encode) ({{URL}})
+      any bytes that are greater than 0x7E or are not [URL code
+      points](https://url.spec.whatwg.org/#url-code-points) ({{URL}}) in these
+      URLs. It is particularly important to make sure no unescaped nulls (0x00)
+      or angle brackets (0x3C and 0x3E) appear.
+   1. Similarly, if the request headers for any contained resource are based on
+      the headers sent while requesting the bundle, only include request header
+      field names **and values** that appear in a static allowlist. Keep the set of
+      allowed request header fields smaller than 24 elements to prevent
+      attackers from controlling a whole CBOR length byte.
+   1. Restrict the number of items a request can direct the server to include in
+      a bundle to less than 12, again to prevent attackers from controlling a
+      whole CBOR length byte.
+   1. Do not reflect request header fields into the set of response headers.
+
+If the server serves responses that are written by a potential attacker but then
+escaped, the `application/webbundle` format allows the attacker to use the
+length of the response to control a few bytes before the start of the response.
+Any existing mechanisms that prevent polyglot documents probably keep working in
+the face of this new attack, but we don't have a guarantee of that.
+
+To encourage servers to include the `X-Content-Type-Options: nosniff` header
+field, clients SHOULD reject bundles served without it.
 
 # IANA considerations
 

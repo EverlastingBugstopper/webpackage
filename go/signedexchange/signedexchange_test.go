@@ -2,116 +2,49 @@ package signedexchange_test
 
 import (
 	"bytes"
-	"encoding/pem"
-	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
-	"strings"
+	"os"
+	"reflect"
 	"testing"
 	"time"
 
 	. "github.com/WICG/webpackage/go/signedexchange"
-	"github.com/WICG/webpackage/go/signedexchange/internal/bigendian"
-	"github.com/WICG/webpackage/go/signedexchange/internal/testhelper"
+	"github.com/WICG/webpackage/go/signedexchange/certurl"
+	"github.com/WICG/webpackage/go/signedexchange/version"
 )
 
 const (
+	requestUrl = "https://example.com/"
+
 	payload  = `Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.`
 	pemCerts = `-----BEGIN CERTIFICATE-----
-MIIF8jCCBNqgAwIBAgIQDmTF+8I2reFLFyrrQceMsDANBgkqhkiG9w0BAQsFADBw
-MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3
-d3cuZGlnaWNlcnQuY29tMS8wLQYDVQQDEyZEaWdpQ2VydCBTSEEyIEhpZ2ggQXNz
-dXJhbmNlIFNlcnZlciBDQTAeFw0xNTExMDMwMDAwMDBaFw0xODExMjgxMjAwMDBa
-MIGlMQswCQYDVQQGEwJVUzETMBEGA1UECBMKQ2FsaWZvcm5pYTEUMBIGA1UEBxML
-TG9zIEFuZ2VsZXMxPDA6BgNVBAoTM0ludGVybmV0IENvcnBvcmF0aW9uIGZvciBB
-c3NpZ25lZCBOYW1lcyBhbmQgTnVtYmVyczETMBEGA1UECxMKVGVjaG5vbG9neTEY
-MBYGA1UEAxMPd3d3LmV4YW1wbGUub3JnMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
-MIIBCgKCAQEAs0CWL2FjPiXBl61lRfvvE0KzLJmG9LWAC3bcBjgsH6NiVVo2dt6u
-Xfzi5bTm7F3K7srfUBYkLO78mraM9qizrHoIeyofrV/n+pZZJauQsPjCPxMEJnRo
-D8Z4KpWKX0LyDu1SputoI4nlQ/htEhtiQnuoBfNZxF7WxcxGwEsZuS1KcXIkHl5V
-RJOreKFHTaXcB1qcZ/QRaBIv0yhxvK1yBTwWddT4cli6GfHcCe3xGMaSL328Fgs3
-jYrvG29PueB6VJi/tbbPu6qTfwp/H1brqdjh29U52Bhb0fJkM9DWxCP/Cattcc7a
-z8EXnCO+LK8vkhw/kAiJWPKx4RBvgy73nwIDAQABo4ICUDCCAkwwHwYDVR0jBBgw
-FoAUUWj/kK8CB3U8zNllZGKiErhZcjswHQYDVR0OBBYEFKZPYB4fLdHn8SOgKpUW
-5Oia6m5IMIGBBgNVHREEejB4gg93d3cuZXhhbXBsZS5vcmeCC2V4YW1wbGUuY29t
-ggtleGFtcGxlLmVkdYILZXhhbXBsZS5uZXSCC2V4YW1wbGUub3Jngg93d3cuZXhh
-bXBsZS5jb22CD3d3dy5leGFtcGxlLmVkdYIPd3d3LmV4YW1wbGUubmV0MA4GA1Ud
-DwEB/wQEAwIFoDAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwdQYDVR0f
-BG4wbDA0oDKgMIYuaHR0cDovL2NybDMuZGlnaWNlcnQuY29tL3NoYTItaGEtc2Vy
-dmVyLWc0LmNybDA0oDKgMIYuaHR0cDovL2NybDQuZGlnaWNlcnQuY29tL3NoYTIt
-aGEtc2VydmVyLWc0LmNybDBMBgNVHSAERTBDMDcGCWCGSAGG/WwBATAqMCgGCCsG
-AQUFBwIBFhxodHRwczovL3d3dy5kaWdpY2VydC5jb20vQ1BTMAgGBmeBDAECAjCB
-gwYIKwYBBQUHAQEEdzB1MCQGCCsGAQUFBzABhhhodHRwOi8vb2NzcC5kaWdpY2Vy
-dC5jb20wTQYIKwYBBQUHMAKGQWh0dHA6Ly9jYWNlcnRzLmRpZ2ljZXJ0LmNvbS9E
-aWdpQ2VydFNIQTJIaWdoQXNzdXJhbmNlU2VydmVyQ0EuY3J0MAwGA1UdEwEB/wQC
-MAAwDQYJKoZIhvcNAQELBQADggEBAISomhGn2L0LJn5SJHuyVZ3qMIlRCIdvqe0Q
-6ls+C8ctRwRO3UU3x8q8OH+2ahxlQmpzdC5al4XQzJLiLjiJ2Q1p+hub8MFiMmVP
-PZjb2tZm2ipWVuMRM+zgpRVM6nVJ9F3vFfUSHOb4/JsEIUvPY+d8/Krc+kPQwLvy
-ieqRbcuFjmqfyPmUv1U9QoI4TQikpw7TZU0zYZANP4C/gj4Ry48/znmUaRvy2kvI
-l7gRQ21qJTK5suoiYoYNo3J9T+pXPGU7Lydz/HwW+w0DpArtAaukI8aNX4ohFUKS
-wDSiIIWIWJiJGbEeIO0TIFwEVWTOnbNl/faPXpk5IRXicapqiII=
------END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIIEsTCCA5mgAwIBAgIQBOHnpNxc8vNtwCtCuF0VnzANBgkqhkiG9w0BAQsFADBs
-MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3
-d3cuZGlnaWNlcnQuY29tMSswKQYDVQQDEyJEaWdpQ2VydCBIaWdoIEFzc3VyYW5j
-ZSBFViBSb290IENBMB4XDTEzMTAyMjEyMDAwMFoXDTI4MTAyMjEyMDAwMFowcDEL
-MAkGA1UEBhMCVVMxFTATBgNVBAoTDERpZ2lDZXJ0IEluYzEZMBcGA1UECxMQd3d3
-LmRpZ2ljZXJ0LmNvbTEvMC0GA1UEAxMmRGlnaUNlcnQgU0hBMiBIaWdoIEFzc3Vy
-YW5jZSBTZXJ2ZXIgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC2
-4C/CJAbIbQRf1+8KZAayfSImZRauQkCbztyfn3YHPsMwVYcZuU+UDlqUH1VWtMIC
-Kq/QmO4LQNfE0DtyyBSe75CxEamu0si4QzrZCwvV1ZX1QK/IHe1NnF9Xt4ZQaJn1
-itrSxwUfqJfJ3KSxgoQtxq2lnMcZgqaFD15EWCo3j/018QsIJzJa9buLnqS9UdAn
-4t07QjOjBSjEuyjMmqwrIw14xnvmXnG3Sj4I+4G3FhahnSMSTeXXkgisdaScus0X
-sh5ENWV/UyU50RwKmmMbGZJ0aAo3wsJSSMs5WqK24V3B3aAguCGikyZvFEohQcft
-bZvySC/zA/WiaJJTL17jAgMBAAGjggFJMIIBRTASBgNVHRMBAf8ECDAGAQH/AgEA
-MA4GA1UdDwEB/wQEAwIBhjAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIw
-NAYIKwYBBQUHAQEEKDAmMCQGCCsGAQUFBzABhhhodHRwOi8vb2NzcC5kaWdpY2Vy
-dC5jb20wSwYDVR0fBEQwQjBAoD6gPIY6aHR0cDovL2NybDQuZGlnaWNlcnQuY29t
-L0RpZ2lDZXJ0SGlnaEFzc3VyYW5jZUVWUm9vdENBLmNybDA9BgNVHSAENjA0MDIG
-BFUdIAAwKjAoBggrBgEFBQcCARYcaHR0cHM6Ly93d3cuZGlnaWNlcnQuY29tL0NQ
-UzAdBgNVHQ4EFgQUUWj/kK8CB3U8zNllZGKiErhZcjswHwYDVR0jBBgwFoAUsT7D
-aQP4v0cB1JgmGggC72NkK8MwDQYJKoZIhvcNAQELBQADggEBABiKlYkD5m3fXPwd
-aOpKj4PWUS+Na0QWnqxj9dJubISZi6qBcYRb7TROsLd5kinMLYBq8I4g4Xmk/gNH
-E+r1hspZcX30BJZr01lYPf7TMSVcGDiEo+afgv2MW5gxTs14nhr9hctJqvIni5ly
-/D6q1UEL2tU2ob8cbkdJf17ZSHwD2f2LSaCYJkJA69aSEaRkCldUxPUd1gJea6zu
-xICaEnL6VpPX/78whQYwvwt/Tv9XBZ0k7YXDK/umdaisLRbvfXknsuvCnQsH6qqF
-0wGjIChBWUMo0oHjqvbsezt3tkBigAVBRQHvFwY+3sAzm2fTYS5yh+Rp/BIAV0Ae
-cPUeybQ=
+MIIBhjCCAS2gAwIBAgIJAOhR3xtYd5QsMAoGCCqGSM49BAMCMDIxFDASBgNVBAMM
+C2V4YW1wbGUub3JnMQ0wCwYDVQQKDARUZXN0MQswCQYDVQQGEwJVUzAeFw0xODEx
+MDUwOTA5MjJaFw0xOTEwMzEwOTA5MjJaMDIxFDASBgNVBAMMC2V4YW1wbGUub3Jn
+MQ0wCwYDVQQKDARUZXN0MQswCQYDVQQGEwJVUzBZMBMGByqGSM49AgEGCCqGSM49
+AwEHA0IABH1E6odXRm3+r7dMYmkJRmftx5IYHAsqgA7zjsFfCvPqL/fM4Uvi8EFu
+JVQM/oKEZw3foCZ1KBjo/6Tenkoj/wCjLDAqMBAGCisGAQQB1nkCARYEAgUAMBYG
+A1UdEQQPMA2CC2V4YW1wbGUub3JnMAoGCCqGSM49BAMCA0cAMEQCIEbxRKhlQYlw
+Ja+O9h7misjLil82Q82nhOtl4j96awZgAiB6xrvRZIlMtWYKdi41BTb5fX22gL9M
+L/twWg8eWpYeJA==
 -----END CERTIFICATE-----
 `
-	// Generated by `openssl genrsa -out privatekey.pem 2048`
-	pemPrivateKey = `-----BEGIN RSA PRIVATE KEY-----
-MIIEoAIBAAKCAQEAoMRYVlgUxlVOvejxDblbIZAg4ZtTbAmI7/YzNqmlKBB7UGik
-7t6MCTJRM1PAQoDdRC0H5XI0TS04Lizwet8gEeBMtyHqLcWmOUGYNsYO7nNgT7N2
-wbEs6v6KHHPHPMKzmxMPayOWrfE7mRvHvwTtIbE5ar5PNjpypjNH24TddkAmIXbM
-YbkS2F43rVgpzOihjbeTQ/A6pxqcplifmoGSI6W26dg5N9yGnmo1ZcLdpHixR9Lr
-e3xvunkDxT+B0OlwBRQtTQvZ1YoDWylpq3cOiFqU0Wn9+AG8JpL2yI49KQMVKyBV
-7dLtr43LFhtBefkyqSNTxqPZyUAJJ2SNkJgwIQIDAQABAoIBAFJz4QqHqj/+SKBF
-9DuhsQeJsBOFYkeqrDzF/IYwg7AEo/odcVnBcfjVgafdcGGrTdBFeCNJa2GZq5Kj
-IcMi5IPGkhHqpvxKvnHnHnYZJldNfTvjQykcAXmUiqkFCE41XYBPSj0cx472hiaE
-hPGHSUdaaaRBbsbVOy/aZSRFBIA8ngxyrW6B94Q/uLVZBn6axqoj8xT1YFVBgH5G
-/lVxfkpjUD2im9r3w+7ofSmMKa6CyJ/bBdRf8p0ACyzDbkfyXjwUxSj/ZFrpLg66
-amEXgauqxKEAhF8MP8oKir9aEwl7EaYFIRFpzQ6LT6edD5vcieov6hDi1f8xxdty
-5lL4HkECgYEA01+pVvn2VqANu9tgpcX3srY6QKnqViBSXr6GX+XpcCJlxR2S4FVD
-gdEwMHJK9137krvzIek57BFQXd4bTpeUW3Da8rX73tUnqKrQ5pmEqpghRyCqo0kT
-V1ObepNUcQVmK6VnqIuckHNV7sjYnSCgY4P4WiPBRJCG3jTI2LUpo/UCgYEAwrV9
-MtwsV9HlVHNrd8hqqaXnDvY1InFCfFxyR0m5KMTiwvcswBbwpTYtKZXWnz2HRVbO
-aMmh2RQKk9Swpwb/q2TjVnPPUqH14++OwyR0k/0L4KBZMY736GqyWnfod6G5KQD2
-f5MtwRFCYoJ6Tts4KtMzxxaV4TeRQA0EES7rK/0CgYBVztbi7TSYs/7/TS6t/XDx
-xtJdH912u0ZVGglY8u/SStR/seLHWTW/hJmIgU13oFqZld083f5anCjBAoKZZCWg
-/W6U61XlfyjLaxTFGHtn+bxAsL007lyArftHRnoYK7XvcAVlwc98QKYY+sYc+3rB
-C3kNtsglunpVyJ3kg5705QJ/cVMwi2maZYLE92I2KoF7k0H8ObkTM/i3uaoU2WkP
-W6s8UD2MzkCLz5y4rHuJbyVglfrwKA0zJiWEAobISm7IX/lYV/kPsgiSFRhY/zs4
-numpABRT1YRgxeVT6VPg+cAnBLaKwbXn63cgLDXE+iCdkE9c04NRuMOexqjMtTOZ
-rQKBgDSCTKwnbJUqN94WdBYjinFN/bR6E0wW640jkB/3e8Y4a+W4OVHWlxoEu4Tm
-s5B6gZsV/ojttR+aaeRknfrhQwEIA/k2r2oZE9yp8djzyiiqGswgw8yO0WSJztbx
-GRqzPwjon7ESIVpKLrVuh5qlMhUkOFUeF9wvViWX4qnV5Fvg
------END RSA PRIVATE KEY-----
-`
-	expectedSignatureHeader = "label; sig=*jek3ixSX+eCsdAupr26+x9t1xhRq/qSSlYEBNvswPaGKl3kNBEoZP/416RIUhrZAHjHfvUafoikfaP4wc7NnuUMcTtXaU0iXrQ4vvHTXFoxejRzEGMxYTi70ZsK9r7cnqPb3Byd+6YSmlBCzX8lqvJ25Mio60n3sWqnv+WROJvMFsVVUTo6Z/RA4GiUZXFuskqRosQmGFu6YHxJa6PK1Y9/FTzFA79u2qXUWk0cLpaKBU7VpPdcVMxsQt4y5xOs9KgdEtIhLNi35//jyKxnk3s9TqCX0IQ2t0di34PsYn8YEZnOcv1OHGfJeaMKKYzOcSc2NwWTOb1VJ9pUpUFtB+A==*; validity-url=\"https://example.com/resource.validity\"; integrity=\"mi-draft2\"; cert-url=\"https://example.com/cert.msg\"; cert-sha256=*ZC3lTYTDBJQVf1P2V7+fibTqbIsWNR/X7CWNVW+CEEA=*; date=1517418800; expires=1517422400"
+	// Generated by `openssl ecparam -out priv.key -name prime256v1 -genkey`
+	pemPrivateKey = `-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIEMac81NMjwO4pQ2IGKZ3UdymYtnFAXEjKdvAdEx4DQwoAoGCCqGSM49
+AwEHoUQDQgAEfUTqh1dGbf6vt0xiaQlGZ+3HkhgcCyqADvOOwV8K8+ov98zhS+Lw
+QW4lVAz+goRnDd+gJnUoGOj/pN6eSiP/AA==
+-----END EC PRIVATE KEY-----`
 )
+
+// signatureDate corresponds to the expectedSignatureHeader's date value.
+var signatureDate = time.Date(2018, 1, 31, 17, 13, 20, 0, time.UTC)
+
+var nullLogger = log.New(ioutil.Discard, "", 0)     // Use when some output is expected.
+var stdoutLogger = log.New(os.Stdout, "ERROR: ", 0) // Use when no output is expected.
 
 type zeroReader struct{}
 
@@ -130,164 +63,394 @@ func mustReadFile(path string) []byte {
 	return b
 }
 
+func testForEachVersion(t *testing.T, testFunc func(ver version.Version, t *testing.T)) {
+	for _, ver := range version.AllVersions {
+		t.Run(string(ver), func(t *testing.T) { testFunc(ver, t) })
+	}
+}
+
 func TestSignedExchange(t *testing.T) {
-	u, _ := url.Parse("https://example.com/")
-	header := http.Header{}
-	header.Add("Content-Type", "text/html; charset=utf-8")
-
-	// Multiple values for the same header
-	header.Add("Foo", "Bar")
-	header.Add("Foo", "Baz")
-
-	e, err := NewExchange(u, nil, 200, header, []byte(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.MiEncodePayload(16); err != nil {
-		t.Fatal(err)
-	}
-
-	now := time.Date(2018, 1, 31, 17, 13, 20, 0, time.UTC)
 	certs, err := ParseCertificates([]byte(pemCerts))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	derPrivateKey, _ := pem.Decode([]byte(pemPrivateKey))
-	privKey, err := ParsePrivateKey(derPrivateKey.Bytes)
+	privKey, err := ParsePrivateKey([]byte(pemPrivateKey))
 	if err != nil {
 		t.Fatal(err)
 	}
 	certUrl, _ := url.Parse("https://example.com/cert.msg")
 	validityUrl, _ := url.Parse("https://example.com/resource.validity")
-	s := &Signer{
-		Date:        now,
-		Expires:     now.Add(1 * time.Hour),
-		Certs:       certs,
-		CertUrl:     certUrl,
-		ValidityUrl: validityUrl,
-		PrivKey:     privKey,
-		Rand:        zeroReader{},
+
+	expectedRespHeader := map[version.Version]http.Header{
+		version.Version1b1: http.Header{
+			"Content-Type":     []string{"text/html; charset=utf-8"},
+			"Foo":              []string{"Bar,Baz"},
+			"Content-Encoding": []string{"mi-sha256-draft2"},
+			"Mi-Draft2":        []string{"mi-sha256-draft2=DRyBGPb7CAW2ukzb9sT1S1ialssthiv6QW7Ks-Trg4Y"},
+		},
+		version.Version1b2: http.Header{
+			"Content-Type":     []string{"text/html; charset=utf-8"},
+			"Foo":              []string{"Bar,Baz"},
+			"Content-Encoding": []string{"mi-sha256-03"},
+			"Digest":           []string{"mi-sha256-03=DRyBGPb7CAW2ukzb9sT1S1ialssthiv6QW7Ks+Trg4Y="},
+		},
+		version.Version1b3: http.Header{
+			"Content-Type":     []string{"text/html; charset=utf-8"},
+			"Foo":              []string{"Bar,Baz"},
+			"Content-Encoding": []string{"mi-sha256-03"},
+			"Digest":           []string{"mi-sha256-03=DRyBGPb7CAW2ukzb9sT1S1ialssthiv6QW7Ks+Trg4Y="},
+		},
 	}
-	if err := e.AddSignatureHeader(s); err != nil {
-		t.Fatal(err)
+	expectedSignatureHeader := map[version.Version]string{
+		version.Version1b1: "label;cert-sha256=*eLWHusI0YcDcHSG5nkYbyZddE2sidVyhx6iSYoJ+SFc=*;cert-url=\"https://example.com/cert.msg\";date=1517418800;expires=1517422400;integrity=\"mi-draft2\";sig=*MEYCIQCbay5VbkR9mi4pnwDAJamuf7Fj1CWnEnJt6Uxm7YeqiwIhAL8JISyzF5sDhtUaEbNCE6vgv2NIKCkONzLgwL23UL6P*;validity-url=\"https://example.com/resource.validity\"",
+		version.Version1b2: "label;cert-sha256=*eLWHusI0YcDcHSG5nkYbyZddE2sidVyhx6iSYoJ+SFc=*;cert-url=\"https://example.com/cert.msg\";date=1517418800;expires=1517422400;integrity=\"digest/mi-sha256-03\";sig=*MEUCIHNiDRQncQpVxW2x+woinMUTY8nuSQfi0mbJ5J6x7FZyAiEAgh6FH6PdncNCK8GHTwN3wfUUUFdjVswNi1PfIgCOwHk=*;validity-url=\"https://example.com/resource.validity\"",
+		version.Version1b3: "label;cert-sha256=*eLWHusI0YcDcHSG5nkYbyZddE2sidVyhx6iSYoJ+SFc=*;cert-url=\"https://example.com/cert.msg\";date=1517418800;expires=1517422400;integrity=\"digest/mi-sha256-03\";sig=*MEUCIEQPK0UKPm9/XP5Jko2V72vTrGlBqB9HHoOzhJmVPflmAiEAwCSBw98NhUhFGJaxL6ITT+QZBBeO7TCLAiHn1apY6Es=*;validity-url=\"https://example.com/resource.validity\"",
 	}
 
-	var buf bytes.Buffer
-	if err := e.Write(&buf); err != nil {
-		t.Fatal(err)
-	}
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		reqHeader := http.Header{}
+		reqHeader.Add("Accept", "*/*")
+		respHeader := http.Header{}
+		respHeader.Add("Content-Type", "text/html; charset=utf-8")
 
-	magic, err := buf.ReadBytes(0x00)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(magic, HeaderMagicBytes) {
-		t.Errorf("unexpected magic: %q", magic)
-	}
+		// Multiple values for the same header
+		respHeader.Add("Foo", "Bar")
+		respHeader.Add("Foo", "Baz")
 
-	encodedSigLength := [3]byte{}
-	if _, err := io.ReadFull(&buf, encodedSigLength[:]); err != nil {
-		t.Fatal(err)
-	}
-	sigLength := bigendian.Decode3BytesUint(encodedSigLength)
+		e := NewExchange(ver, requestUrl, http.MethodGet, reqHeader, 200, respHeader, []byte(payload))
+		if err := e.MiEncodePayload(16); err != nil {
+			t.Fatal(err)
+		}
 
-	if sigLength != len(expectedSignatureHeader) {
-		t.Errorf("Unexpected sigLength: %d", sigLength)
-	}
+		s := &Signer{
+			Date:        signatureDate,
+			Expires:     signatureDate.Add(1 * time.Hour),
+			Certs:       certs,
+			CertUrl:     certUrl,
+			ValidityUrl: validityUrl,
+			PrivKey:     privKey,
+			Rand:        zeroReader{},
+		}
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
 
-	encodedHeaderLength := [3]byte{}
-	if _, err := io.ReadFull(&buf, encodedHeaderLength[:]); err != nil {
-		t.Fatal(err)
-	}
-	headerLength := bigendian.Decode3BytesUint(encodedHeaderLength)
+		var buf bytes.Buffer
+		if err := e.Write(&buf); err != nil {
+			t.Fatal(err)
+		}
 
-	signatureHeaderBytes := make([]byte, sigLength)
-	if _, err := io.ReadFull(&buf, signatureHeaderBytes); err != nil {
-		t.Fatal(err)
-	}
+		got, err := ReadExchange(&buf)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if !bytes.Equal(signatureHeaderBytes, []byte(expectedSignatureHeader)) {
-		t.Errorf("Unexpected signature header: %q", signatureHeaderBytes)
-	}
+		if got.Version != ver {
+			t.Errorf("Unexpected version: got %v, want %v", got.Version, ver)
+		}
 
-	encodedHeader := make([]byte, headerLength)
-	if _, err := io.ReadFull(&buf, encodedHeader); err != nil {
-		t.Fatal(err)
-	}
+		if got.RequestURI != requestUrl {
+			t.Errorf("Unexpected request URL: %q", got.RequestURI)
+		}
 
-	got, err := testhelper.CborBinaryToReadableString(encodedHeader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := strings.TrimSpace(string(mustReadFile("test-signedexchange-expected.txt")))
+		if got.RequestMethod != http.MethodGet {
+			t.Errorf("Unexpected request method: %q", got.RequestMethod)
+		}
 
-	if got != want {
-		t.Errorf("WriteExchangeFile:\ngot: %v\nwant: %v", got, want)
-	}
+		if ver == version.Version1b1 || ver == version.Version1b2 {
+			if !reflect.DeepEqual(got.RequestHeaders, reqHeader) {
+				t.Errorf("Unexpected request headers: %v", got.RequestHeaders)
+			}
+		} else {
+			emptyHeader := http.Header{}
+			if !reflect.DeepEqual(got.RequestHeaders, emptyHeader) {
+				t.Errorf("Unexpected request headers: %v", got.RequestHeaders)
+			}
+		}
 
-	gotPayload := buf.Bytes()
-	wantPayload := mustReadFile("test-signedexchange-expected-payload-mi.bin")
-	if !bytes.Equal(gotPayload, wantPayload) {
-		t.Errorf("payload mismatch")
-	}
-}
+		if got.ResponseStatus != 200 {
+			t.Errorf("Unexpected response status: %v", got.ResponseStatus)
+		}
 
-func TestSignedExchangeStatefulHeader(t *testing.T) {
-	u, _ := url.Parse("https://example.com/")
-	header := http.Header{}
-	header.Add("Content-Type", "text/html; charset=utf-8")
-	// Set-Cookie is a stateful header and not available.
-	header.Add("Set-Cookie", "wow, such cookie")
+		if !reflect.DeepEqual(got.ResponseHeaders, expectedRespHeader[ver]) {
+			t.Errorf("Unexpected response headers: %v", got.ResponseHeaders)
+		}
 
-	if _, err := NewExchange(u, nil, 200, header, []byte(payload)); err == nil {
-		t.Errorf("stateful header unexpectedly allowed in an exchange")
-	}
+		if got.SignatureHeaderValue != expectedSignatureHeader[ver] {
+			t.Errorf("Unexpected signature header: %q", got.SignatureHeaderValue)
+		}
 
-	// Header names are case-insensitive.
-	u, _ = url.Parse("https://example.com/")
-	header = http.Header{}
-	header.Add("cOnTent-TyPe", "text/html; charset=utf-8")
-	header.Add("setProfile", "profile X")
-
-	if _, err := NewExchange(u, nil, 200, header, []byte(payload)); err == nil {
-		t.Errorf("stateful header unexpectedly allowed in an exchange")
-	}
-}
-
-func TestSignedExchangeNonHttps(t *testing.T) {
-	u, _ := url.Parse("http://example.com/")
-	if _, err := NewExchange(u, nil, 200, http.Header{}, []byte(payload)); err == nil {
-		t.Errorf("non-https resource URI unexpectedly allowed in an exchange")
-	}
+		wantPayload := mustReadFile("test-signedexchange-expected-payload-mi.bin")
+		if !bytes.Equal(got.Payload, wantPayload) {
+			t.Errorf("payload mismatch")
+		}
+	})
 }
 
 func TestSignedExchangeBannedCertUrlScheme(t *testing.T) {
-	u, _ := url.Parse("https://example.com/")
-	e, err := NewExchange(u, nil, 200, http.Header{}, []byte(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e := NewExchange(ver, requestUrl, http.MethodGet, nil, 200, http.Header{}, []byte(payload))
+		if err := e.MiEncodePayload(16); err != nil {
+			t.Fatal(err)
+		}
+
+		certs, _ := ParseCertificates([]byte(pemCerts))
+		certUrl, _ := url.Parse("http://example.com/cert.msg")
+		validityUrl, _ := url.Parse("https://example.com/resource.validity")
+		privKey, _ := ParsePrivateKey([]byte(pemPrivateKey))
+		s := &Signer{
+			Date:        signatureDate,
+			Expires:     signatureDate.Add(1 * time.Hour),
+			Certs:       certs,
+			CertUrl:     certUrl,
+			ValidityUrl: validityUrl,
+			PrivKey:     privKey,
+			Rand:        zeroReader{},
+		}
+		if err := e.AddSignatureHeader(s); err == nil {
+			t.Errorf("non-{https,data} cert-url unexpectedly allowed in an exchange")
+		}
+	})
+}
+
+func createTestExchange(ver version.Version, t *testing.T) (e *Exchange, s *Signer, certBytes []byte) {
+	header := http.Header{}
+	header.Add("Content-Type", "text/html; charset=utf-8")
+
+	e = NewExchange(ver, requestUrl, http.MethodGet, nil, 200, header, []byte(payload))
 	if err := e.MiEncodePayload(16); err != nil {
 		t.Fatal(err)
 	}
 
-	now := time.Date(2018, 1, 31, 17, 13, 20, 0, time.UTC)
-	certs, _ := ParseCertificates([]byte(pemCerts))
-	certUrl, _ := url.Parse("http://example.com/cert.msg")
+	certs, err := ParseCertificates([]byte(pemCerts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	privKey, err := ParsePrivateKey([]byte(pemPrivateKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	certUrl, _ := url.Parse("https://example.com/cert.msg")
 	validityUrl, _ := url.Parse("https://example.com/resource.validity")
-	derPrivateKey, _ := pem.Decode([]byte(pemPrivateKey))
-	privKey, _ := ParsePrivateKey(derPrivateKey.Bytes)
-	s := &Signer{
-		Date:        now,
-		Expires:     now.Add(1 * time.Hour),
+	s = &Signer{
+		Date:        signatureDate,
+		Expires:     signatureDate.Add(1 * time.Hour),
 		Certs:       certs,
 		CertUrl:     certUrl,
 		ValidityUrl: validityUrl,
 		PrivKey:     privKey,
 		Rand:        zeroReader{},
 	}
-	if err := e.AddSignatureHeader(s); err == nil {
-		t.Errorf("non-{https,data} cert-url unexpectedly allowed in an exchange")
+
+	certChain, err := certurl.NewCertChain(certs, []byte("dummy"), nil)
+	if err != nil {
+		t.Fatal(err)
 	}
+	var certCBOR bytes.Buffer
+	if err := certChain.Write(&certCBOR); err != nil {
+		t.Fatal(err)
+	}
+	certBytes = certCBOR.Bytes()
+	return
+}
+
+func verificationShouldSucceed(t *testing.T, e *Exchange, certBytes []byte, verificationTime time.Time) {
+	certFetcher := func(_ string) ([]byte, error) { return certBytes, nil }
+	if _, ok := e.Verify(verificationTime, certFetcher, stdoutLogger); !ok {
+		t.Errorf("Verification should succeed")
+	}
+}
+
+func verificationShouldFail(t *testing.T, e *Exchange, certBytes []byte, verificationTime time.Time) {
+	certFetcher := func(_ string) ([]byte, error) { return certBytes, nil }
+	if _, ok := e.Verify(verificationTime, certFetcher, nullLogger); ok {
+		t.Errorf("Verification should fail")
+	}
+}
+
+func TestVerify(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e, s, c := createTestExchange(ver, t)
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+		verificationShouldSucceed(t, e, c, signatureDate)
+	})
+}
+
+func TestVerifyNotYetValidExchange(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e, s, c := createTestExchange(ver, t)
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+		verificationTime := signatureDate.Add(-1 * time.Second)
+		verificationShouldFail(t, e, c, verificationTime)
+	})
+}
+
+func TestVerifyExpiredExchange(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e, s, c := createTestExchange(ver, t)
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+		verificationTime := signatureDate.Add(1 * time.Hour).Add(1 * time.Second)
+		verificationShouldFail(t, e, c, verificationTime)
+	})
+}
+
+func TestVerifyBadValidityUrl(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e, s, c := createTestExchange(ver, t)
+		s.ValidityUrl, _ = url.Parse("https://subdomain.example.com/resource.validity")
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+		verificationShouldFail(t, e, c, signatureDate)
+	})
+}
+
+func TestVerifyBadMethod(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		// The test doesn't make sense in version >= b3, which doesn't have request method.
+		if ver != version.Version1b1 && ver != version.Version1b2 {
+			return
+		}
+
+		e, s, c := createTestExchange(ver, t)
+		e.RequestMethod = "POST"
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+		verificationShouldFail(t, e, c, signatureDate)
+	})
+}
+
+func TestVerifyStatefulRequestHeader(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e, s, c := createTestExchange(ver, t)
+		if e.RequestHeaders == nil {
+			e.RequestHeaders = http.Header{}
+		}
+		e.RequestHeaders.Set("Authorization", "Basic Zm9vOmJhcg==")
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+		verificationShouldFail(t, e, c, signatureDate)
+	})
+}
+
+func TestVerifyUncachedHeader(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e, s, c := createTestExchange(ver, t)
+		e.ResponseHeaders.Set("Set-Cookie", "foo=bar")
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+		verificationShouldFail(t, e, c, signatureDate)
+	})
+}
+
+func TestVerifyBadSignature(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e, s, c := createTestExchange(ver, t)
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+		e.ResponseHeaders.Add("Etag", "0123")
+		verificationShouldFail(t, e, c, signatureDate)
+	})
+}
+
+func TestVerifyNoContentType(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e, s, c := createTestExchange(ver, t)
+		e.ResponseHeaders.Del("Content-Type");
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+
+		// The requirement for Content-Type is only for version >= b3.
+		if ver == version.Version1b1 || ver == version.Version1b2 {
+			verificationShouldSucceed(t, e, c, signatureDate)
+		} else {
+			verificationShouldFail(t, e, c, signatureDate)
+		}
+	})
+}
+
+func TestVerifyNonCanonicalURL(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e, s, c := createTestExchange(ver, t)
+		// url.Parse() decodes "%73%78%67" to "sxg"
+		e.RequestURI = "https://example.com/%73%78%67"
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+		verificationShouldSucceed(t, e, c, signatureDate)
+	})
+}
+
+func TestVerifyNonCacheable(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		e, s, c := createTestExchange(ver, t)
+		e.ResponseHeaders.Add("Cache-Control", "no-store")
+		if err := e.AddSignatureHeader(s); err != nil {
+			t.Fatal(err)
+		}
+		switch ver {
+		case version.Version1b1, version.Version1b2:
+			verificationShouldSucceed(t, e, c, signatureDate)
+		default:
+			verificationShouldFail(t, e, c, signatureDate)
+		}
+	})
+}
+
+func TestIsCacheable(t *testing.T) {
+	testForEachVersion(t, func(ver version.Version, t *testing.T) {
+		if ver == version.Version1b1 || ver == version.Version1b2 {
+			return
+		}
+
+		e, _, _ := createTestExchange(ver, t)
+		if !e.IsCacheable(stdoutLogger) {
+			t.Errorf("Response should be cacheable")
+		}
+
+		e, _, _ = createTestExchange(ver, t)
+		e.ResponseHeaders.Add("cache-control", "no-store")
+		if e.IsCacheable(nullLogger) {
+			t.Errorf("Response with \"no-store\" cache directive shouldn't be cacheable")
+		}
+
+		e, _, _ = createTestExchange(ver, t)
+		e.ResponseHeaders.Add("cache-control", "max-age=300, private")
+		if e.IsCacheable(nullLogger) {
+			t.Errorf("Response with \"private\" cache directive shouldn't be cacheable")
+		}
+
+		e, _, _ = createTestExchange(ver, t)
+		e.ResponseStatus = 201
+		if e.IsCacheable(nullLogger) {
+			t.Errorf("Response with status code 201 shouldn't be cacheable by default")
+		}
+
+		e, _, _ = createTestExchange(ver, t)
+		e.ResponseStatus = 201
+		e.ResponseHeaders.Add("cache-control", "max-age=300")
+		if !e.IsCacheable(stdoutLogger) {
+			t.Errorf("Response with \"max-age\" cache directive should be cacheable")
+		}
+
+		e, _, _ = createTestExchange(ver, t)
+		e.ResponseStatus = 201
+		e.ResponseHeaders.Add("expires", "Mon, 07 Jan 2019 07:29:39 GMT")
+		if !e.IsCacheable(stdoutLogger) {
+			t.Errorf("Response with \"Expires\" header should be cacheable")
+		}
+	})
 }

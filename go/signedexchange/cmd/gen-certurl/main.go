@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"golang.org/x/crypto/ocsp"
@@ -27,6 +28,9 @@ func run(pemFilePath, ocspFilePath, sctDirPath string) error {
 	certs, err := signedexchange.ParseCertificates(pem)
 	if err != nil {
 		return err
+	}
+	if len(certs) == 0 {
+		return fmt.Errorf("input file %q has no certificates.", pemFilePath)
 	}
 
 	var ocspDer []byte
@@ -69,13 +73,17 @@ func run(pemFilePath, ocspFilePath, sctDirPath string) error {
 			fmt.Fprintln(os.Stderr, "Warning: Neither cert nor OCSP have embedded SCT list. Use -sctDir flag to add SCT from files.")
 		}
 	}
-
-	out, err := certurl.CreateCertChainCBOR(certs, ocspDer, sctList)
+	certChain, err := certurl.NewCertChain(certs, ocspDer, sctList)
 	if err != nil {
 		return err
 	}
 
-	if _, err := os.Stdout.Write(out); err != nil {
+	buf := &bytes.Buffer{}
+	if err := certChain.Write(buf); err != nil {
+		return err
+	}
+
+	if _, err := buf.WriteTo(os.Stdout); err != nil {
 		return err
 	}
 	return nil

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/mrichman/hargo"
 
@@ -18,8 +19,12 @@ import (
 )
 
 var (
-	flagInput  = flag.String("i", "in.har", "HTTP Archive (HAR) input file")
-	flagOutput = flag.String("o", "out.wbn", "Webbundle output file")
+	flagHar         = flag.String("har", "", "HTTP Archive (HAR) input file")
+	flagDir         = flag.String("dir", "", "Input directory")
+	flagBaseURL     = flag.String("baseURL", "", "Base URL")
+	flagStartURL    = flag.String("startURL", "", "Entry point URL (relative from -baseURL)")
+	flagManifestURL = flag.String("manifestURL", "", "Manifest URL (relative from -baseURL)")
+	flagOutput      = flag.String("o", "out.wbn", "Webbundle output file")
 )
 
 func ReadHar(r io.Reader) (*hargo.Har, error) {
@@ -40,10 +45,14 @@ func ReadHarFromFile(path string) (*hargo.Har, error) {
 	return ReadHar(fi)
 }
 
-func nvpToHeader(nvps []hargo.NVP, isStatefulHeader func(string) bool) (http.Header, error) {
+func nvpToHeader(nvps []hargo.NVP, predBanned func(string) bool) (http.Header, error) {
 	h := make(http.Header)
 	for _, nvp := range nvps {
-		if isStatefulHeader(nvp.Name) {
+		// Drop HTTP/2 pseudo headers.
+		if strings.HasPrefix(nvp.Name, ":") {
+			continue
+		}
+		if predBanned(nvp.Name) {
 			log.Printf("Dropping banned header: %q", nvp.Name)
 			continue
 		}
@@ -59,8 +68,8 @@ func contentToBody(c *hargo.Content) ([]byte, error) {
 	return []byte(c.Text), nil
 }
 
-func run() error {
-	har, err := ReadHarFromFile(*flagInput)
+func fromHar(harPath string) error {
+	har, err := ReadHarFromFile(harPath)
 	if err != nil {
 		return err
 	}
@@ -84,13 +93,22 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("Failed to parse request header for the request %q. err: %v", e.Request.URL, err)
 		}
-		resh, err := nvpToHeader(e.Response.Headers, signedexchange.IsStatefulResponseHeader)
+		resh, err := nvpToHeader(e.Response.Headers, signedexchange.IsUncachedHeader)
 		if err != nil {
 			return fmt.Errorf("Failed to parse response header for the request %q. err: %v", e.Request.URL, err)
 		}
 		body, err := contentToBody(&e.Response.Content)
 		if err != nil {
 			return fmt.Errorf("Failed to extract body from response content for the request %q. err: %v", e.Request.URL, err)
+		}
+
+		if e.Request.Method != http.MethodGet {
+			log.Printf("Dropping the entry: non-GET request method (%s)", e.Request.Method)
+			continue
+		}
+		if e.Response.Status < 100 || e.Response.Status > 999 {
+			log.Printf("Dropping the entry: invalid response status (%d)", e.Response.Status)
+			continue
 		}
 
 		e := &bundle.Exchange{
@@ -117,7 +135,27 @@ func run() error {
 
 func main() {
 	flag.Parse()
-	if err := run(); err != nil {
-		log.Fatal(err)
+	if *flagHar != "" {
+		if *flagBaseURL == "" {
+			fmt.Fprintln(os.Stderr, "Warning: -baseURL is ignored when input is HAR.")
+		}
+		if *flagStartURL == "" {
+			fmt.Fprintln(os.Stderr, "Warning: -startURL is ignored when input is HAR.")
+		}
+		if err := fromHar(*flagHar); err != nil {
+			log.Fatal(err)
+		}
+	} else if *flagDir != "" {
+		if *flagBaseURL == "" {
+			fmt.Fprintln(os.Stderr, "Please specify -baseURL.")
+			flag.Usage()
+			return
+		}
+		if err := fromDir(*flagDir, *flagBaseURL, *flagStartURL, *flagManifestURL); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		fmt.Fprintln(os.Stderr, "Please specify -har or -dir.")
+		flag.Usage()
 	}
 }
